@@ -1,0 +1,66 @@
+@page {
+  size: A4;
+  margin: 12mm 13mm 13mm 13mm;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; font-family: Arial, "DejaVu Sans", sans-serif; color: #14283b; font-size: 9pt; }
+body { background: #fff; }
+.page { position: relative; min-height: 272mm; page-break-after: always; }
+.page:last-child { page-break-after: auto; }
+.report-header { display: grid; grid-template-columns: 1.05fr 1.45fr .82fr; min-height: 32mm; background: #102b40; color: #fff; border-radius: 2px; overflow: hidden; }
+.brand-block { padding: 4mm 3mm; border-right: 1px solid #536d80; display: flex; flex-direction: column; justify-content: center; }
+.brand-mark { display: inline-block; align-self: flex-start; border: 1px solid #e7bd62; color: #fff; padding: 1mm 2mm; font: bold 16pt Georgia, serif; margin-bottom: 2mm; }
+.brand-caption { font-size: 6.5pt; line-height: 1.4; color: #c9d9e6; }
+.report-title { padding: 4mm 4mm; display: flex; flex-direction: column; justify-content: center; }
+.eyebrow { font-size: 6.5pt; letter-spacing: .45px; color: #c9d9e6; }
+.report-title h1 { font-size: 13pt; line-height: 1.25; margin: 1.5mm 0; color: #fff; }
+.report-title p { font-size: 7pt; margin: 0; color: #dbe5ed; }
+.recommendation { background: #13764f; text-align: center; padding: 3mm 2mm; display: flex; flex-direction: column; justify-content: center; color: #fff; }
+.recommendation .eyebrow { color: #d8f1e6; }
+.recommendation-value { font-size: 19pt; font-weight: 800; line-height: 1.2; margin: 1mm 0; }
+.recommendation strong { font-size: 11pt; margin-top: .5mm; }
+.upside { font-size: 8pt; font-weight: bold; margin-top: 1mm; }
+.stock-intro { margin: 3.5mm 0 2.5mm; border-bottom: 1px solid #d79d2c; padding-bottom: 2mm; }
+.stock-name-line { display: flex; align-items: baseline; gap: 3mm; }
+.stock-name-line h2 { color: #12334b; font-size: 22pt; margin: 0; line-height: 1.15; }
+.stock-name-line span { font-size: 9pt; color: #314b60; }
+.stock-meta { margin-top: 1.5mm; font-size: 7pt; color: #637487; }
+.stock-meta span { color: #9ba9b5; padding: 0 1mm; }
+.top-grid { display: grid; grid-template-columns: 1.25fr .95fr; gap: 4mm; margin-bottom: 4mm; }
+.panel { min-width: 0; }
+.panel h3, .summary-box h3, .disclaimer h3 { font-size: 9pt; color: #12334b; margin: 0 0 1.5mm; padding-bottom: 1.5mm; border-bottom: 1px solid #2879bd; letter-spacing: .15px; }
+.chart-frame { height: 42mm; border: 1px solid #cbd8e2; background: #fbfdff; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.chart-frame img { width: 100%; height: 100%; object-fit: contain; }
+.chart-placeholder { text-align: center; color: #6e8293; padding: 5mm; display: flex; flex-direction: column; gap: 2mm; font-size: 7.5pt; }
+.chart-placeholder strong { color: #294a63; }
+.source-note { color: #718294; font-size: 6.3pt; line-height: 1.45; margin: 1.5mm 0 0; }
+.metric-table, .financial-table { width: 100%; border-collapse: collapse; font-size: 7.2pt; }
+.metric-table td { padding: 1.25mm 0; border-bottom: 1px solid #d8e1e8; }
+.metric-table td:first-child { color: #63778a; padding-right: 2mm; }
+.metric-table td:last-child { text-align: right; font-weight: bold; color: #18374f; white-space: nowrap; }
+.financial-section { margin-top: 1mm; }
+.financial-table { font-size: 7.1pt; }
+.financial-table thead th { background: #2376b9; color: #fff; font-weight: bold; padding: 1.6mm 1.4mm; text-align: right; }
+.financial-table thead th:first-child { text-align: left; width: 37%; }
+.financial-table tbody td { padding: 1.25mm 1.4mm; border-bottom: 1px solid #d7e0e8; text-align: right; }
+.financial-table tbody td:first-child { text-align: left; }
+.financial-table tbody tr:nth-child(even):not(.section-row) { background: #eef4f9; }
+.financial-table .section-row th { background: #102b40; color: #fff; text-align: left; padding: 1.5mm 1.4mm; font-size: 7pt; letter-spacing: .15px; }
+.investment-thesis { margin-top: 4mm; }
+.thesis-content { min-height: 10mm; white-space: pre-line; font-size: 8pt; line-height: 1.5; color: #304a60; }
+.page-footer { position: absolute; bottom: 0; left: 0; right: 0; padding-top: 2mm; border-top: 1px solid #d6e0e8; color: #8090a0; display: flex; justify-content: space-between; font-size: 6.5pt; }
+.page-two { padding-top: 0; }
+.summary-box { background: #eef5fb; border-left: 3px solid #267fc0; padding: 4mm; margin: 0 0 5mm; }
+.summary-box h3 { border: 0; margin-bottom: 2mm; padding: 0; font-size: 8pt; }
+.summary-box p { margin: 0; font-size: 8.3pt; line-height: 1.6; color: #29465d; white-space: pre-line; }
+.two-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 7mm; }
+.bullet-panel h3 { margin-bottom: 2mm; }
+.bullet-panel ul { margin: 0; padding-left: 4mm; }
+.bullet-panel li { font-size: 8pt; line-height: 1.55; margin: 0 0 2.5mm; padding-left: .5mm; color: #29465d; }
+.bullet-panel li::marker { color: #267fc0; }
+.risk-panel li::marker { color: #c65a55; }
+.analyst-line { margin-top: 6mm; font-size: 7.5pt; color: #334f64; }
+.analyst-line strong { color: #15364e; }
+.disclaimer { margin-top: 5mm; border: 1px solid #ccd8e3; border-radius: 2px; padding: 3mm 4mm; background: #fbfcfd; }
+.disclaimer h3 { font-size: 7pt; border: 0; padding: 0; margin-bottom: 2mm; }
+.disclaimer p { font-size: 6.5pt; line-height: 1.5; color: #687a89; margin: 0; }
