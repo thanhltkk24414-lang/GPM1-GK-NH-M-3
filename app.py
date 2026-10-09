@@ -71,11 +71,11 @@ st.markdown('<div class="main-title" style="text-align: center; margin-bottom: 3
 # Giao diện Nhập liệu
 col_input, col_btn, _ = st.columns([2, 1, 3])
 with col_input:
-    ticker = st.text_input("MÃ CHỨNG KHOÁN:", value="ACB", label_visibility="collapsed", placeholder="Nhập mã cổ phiếu (VD: HPG, VNM, ACB)").upper()
+    ticker = st.text_input("MÃ CHỨNG KHOÁN:", value="", label_visibility="collapsed", placeholder="Nhập mã cổ phiếu (VD: HPG, VNM, ACB)").upper()
 with col_btn:
     analyze_btn = st.button("Truy Xuất Báo Cáo", type="primary", use_container_width=True)
 
-# Phân tích ngay khi có mã cổ phiếu (hiển thị trang có sẵn ngay khi mở)
+# Phân tích ngay khi có mã cổ phiếu
 if ticker:
     with st.spinner(f"Hệ thống đang tổng hợp dữ liệu cho {ticker}..."):
         try:
@@ -209,3 +209,19 @@ if ticker:
 
         except Exception as e:
             st.error(f"Đã xảy ra lỗi hệ thống trong quá trình xử lý: {e}")
+else:
+    # Màn hình chào mừng khi chưa nhập mã
+    st.markdown('''
+    <div style="text-align: center; padding: 50px; background-color: #f7fafc; border-radius: 10px; margin-top: 30px; border: 1px dashed #cbd5e0;">
+        <h2 style="color: #2b6cb0; font-family: 'Segoe UI', Tahoma, sans-serif; margin-bottom: 20px;">Hệ Thống Đang Sẵn Sàng</h2>
+        <p style="color: #4a5568; font-size: 16px; max-width: 600px; margin: 0 auto; line-height: 1.6;">
+            Vui lòng nhập mã chứng khoán (VD: <b>HPG, VNM, FPT</b>) vào ô tìm kiếm phía trên để hệ thống tự động:
+        </p>
+        <ul style="color: #4a5568; font-size: 16px; text-align: left; max-width: 400px; margin: 20px auto; line-height: 1.8;">
+            <li>Trích xuất dữ liệu giao dịch và định giá hiện tại</li>
+            <li>Phân tích biểu đồ diễn biến giá chuyên sâu</li>
+            <li>Tổng hợp số liệu tài chính qua các năm</li>
+            <li>Kết xuất báo cáo phân tích dưới định dạng PDF</li>
+        </ul>
+    </div>
+    ''', unsafe_allow_html=True)
