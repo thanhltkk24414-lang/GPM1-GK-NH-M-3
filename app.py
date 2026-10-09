@@ -335,20 +335,20 @@ else:
     st.markdown("""
     <div class="welcome-box" style="margin-top: 50px;">
         <p style="color: #d6bcfa; font-size: 18px; max-width: 800px; margin: 0 auto 10px auto; line-height: 1.6;">
-            Dựa trên các nguồn dữ liệu có thể khai thác như:
+            Dựa trên các nguồn dữ liệu như:
         </p>
         <ul style="color: #e2e8f0; font-size: 18px; max-width: 800px; margin: 0 auto 20px auto; padding-left: 40px; line-height: 1.8; list-style-type: disc;">
-            <li><b>Giá và dữ liệu giao dịch</b> chứng khoán;</li>
-            <li><b>Báo cáo tài chính và các chỉ số tài chính</b> doanh nghiệp niêm yết;</li>
-            <li><b>Thông tin, tin tức</b> doanh nghiệp cập nhật;</li>
-            <li>Báo cáo phân tích của các công ty chứng khoán – format/trình bày;</li>
-            <li>Các nguồn dữ liệu tài chính và công nghệ phù hợp khác;</li>
+            <li><b>Giá và dữ liệu giao dịch</b> chứng khoán</li>
+            <li><b>Báo cáo tài chính và các chỉ số tài chính</b> doanh nghiệp niêm yết</li>
+            <li><b>Thông tin, tin tức</b> doanh nghiệp cập nhật</li>
+            <li>Báo cáo phân tích của các công ty chứng khoán</li>
+            <li>Các nguồn dữ liệu tài chính và công nghệ phù hợp khác</li>
         </ul>
         <p style="color: #e9d8fd; font-size: 18px; max-width: 800px; margin: 0 auto 10px auto; line-height: 1.6; font-weight: bold;">
-            Mỗi nhóm hãy thiết kế, xây dựng và vận hành một hệ thống phân tích cơ hội đầu tư vào cổ phiếu bất kỳ; báo cáo phân tích tự động trích xuất ra PDF theo nhu cầu người dùng.
+            Báo cáo phân tích tự động trích xuất ra PDF theo nhu cầu người dùng.
         </p>
         <p style="color: #e9d8fd; font-size: 18px; max-width: 800px; margin: 0 auto; line-height: 1.6;">
-            Yêu cầu: <b>chính xác về mặt dữ liệu, kết quả phân tích đánh giá thích hợp và sự sáng tạo</b>
+            <b>Chính xác về mặt dữ liệu, kết quả phân tích đánh giá thích hợp và sáng tạo</b>
         </p>
     </div>
     """, unsafe_allow_html=True)
