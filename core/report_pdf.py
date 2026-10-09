@@ -1,293 +1,413 @@
 # core/report_pdf.py
-import os
-import datetime
-from reportlab.lib.pagesizes import letter
-from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.pdfgen import canvas
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+import argparse
+import base64
+from datetime import date
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 
-def register_vietnamese_font():
-    """Đăng ký font tiếng Việt Unicode từ dự án (assets/fonts) hoặc hệ thống"""
-    # 1. Ưu tiên font trong thư mục assets/fonts/ của dự án
-    project_font = "assets/fonts/arial.ttf"
-    project_font_bold = "assets/fonts/arialbd.ttf"
-    
-    if os.path.exists(project_font):
-        try:
-            pdfmetrics.registerFont(TTFont('VietnameseFont', project_font))
-            bold_font = project_font_bold if os.path.exists(project_font_bold) else project_font
-            pdfmetrics.registerFont(TTFont('VietnameseFont-Bold', bold_font))
-            return 'VietnameseFont', 'VietnameseFont-Bold'
-        except Exception:
-            pass
+import jinja2
+import pandas as pd
 
-    # 2. Dự phòng lấy font hệ thống OS
-    font_paths = [
-        "C:\\Windows\\Fonts\\arial.ttf",
-        "C:\\Windows\\Fonts\\segoeui.ttf",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
+def _format_price(value):
+    if pd.isna(value):
+        return "—"
+    return f"{value:,.2f}"
+
+
+def _format_indicator(value, suffix=""):
+    if pd.isna(value):
+        return None
+    return f"{value:,.2f}{suffix}"
+
+
+def _price_chart_data_uri(history):
+    prices = pd.to_numeric(history["close"], errors="coerce").dropna().tail(60)
+    if len(prices) < 2:
+        return ""
+
+    width, height, padding = 800, 320, 24
+    low, high = prices.min(), prices.max()
+    spread = high - low or 1
+    points = " ".join(
+        f"{padding + index * (width - 2 * padding) / (len(prices) - 1):.1f},"
+        f"{height - padding - (price - low) * (height - 2 * padding) / spread:.1f}"
+        for index, price in enumerate(prices)
+    )
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}">'
+        f'<rect width="{width}" height="{height}" fill="#fbfdff"/>'
+        f'<polyline points="{points}" fill="none" stroke="#2376b9" '
+        'stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>'
+        "</svg>"
+    )
+    encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded}"
+
+
+def _load_financial_data(ticker, workbook_path):
+    workbook_path = Path(workbook_path)
+    if not workbook_path.is_absolute():
+        workbook_path = Path(__file__).resolve().parent.parent / workbook_path
+
+    sheets = pd.read_excel(workbook_path, sheet_name=None, engine="openpyxl")
+    required_sheets = {"income_statement", "balance_sheet", "cash_flow", "ratio"}
+    missing_sheets = required_sheets.difference(sheets)
+    if missing_sheets:
+        raise ValueError(
+            f"Workbook BCTC thiếu sheet: {', '.join(sorted(missing_sheets))}"
+        )
+
+    for sheet_name in required_sheets:
+        required_columns = {"ticker", "item", "item_id"}
+        missing_columns = required_columns.difference(sheets[sheet_name].columns)
+        if missing_columns:
+            raise ValueError(
+                f"Sheet {sheet_name} thiếu cột: {', '.join(sorted(missing_columns))}"
+            )
+
+    ratio_data = sheets["ratio"]
+    ticker_mask = ratio_data["ticker"].astype("string").str.strip().str.upper().eq(ticker)
+    ratio_data = ratio_data.loc[ticker_mask]
+    if ratio_data.empty:
+        return [], [], {}
+
+    year_columns = [
+        column
+        for column in ratio_data.columns
+        if str(column).isdigit()
     ]
-    font_bold_paths = [
-        "C:\\Windows\\Fonts\\arialbd.ttf",
-        "C:\\Windows\\Fonts\\segoeuib.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    years = sorted(year_columns, key=int, reverse=True)
+    if not years:
+        raise ValueError(f"Workbook BCTC không có cột năm cho mã {ticker}.")
+
+    selected_items = {
+        "income_statement": [
+            ("net_interest_income", "Thu nhập lãi thuần", "billions"),
+            ("net_fee_and_commission_income", "Lãi thuần từ dịch vụ", "billions"),
+            ("profit_before_tax", "Lợi nhuận trước thuế", "billions"),
+            ("net_profit", "Lợi nhuận sau thuế", "billions"),
+        ],
+        "balance_sheet": [
+            ("total_assets", "Tổng tài sản", "billions"),
+            ("total_liabilities", "Tổng nợ phải trả", "billions"),
+        ],
+        "cash_flow": [
+            ("operating_cash_flow", "Lưu chuyển tiền kinh doanh", "billions"),
+            ("investing_cash_flow", "Lưu chuyển tiền đầu tư", "billions"),
+            ("financing_cash_flow", "Lưu chuyển tiền tài chính", "billions"),
+        ],
+        "ratio": [
+            ("trailing_eps", "EPS", "currency"),
+            ("pe_ratio", "P/E", "multiple"),
+            ("pb_ratio", "P/B", "multiple"),
+            ("roe", "ROE", "percent"),
+            ("roa", "ROA", "percent"),
+            ("net_interest_margin_nim", "NIM", "percent"),
+            ("beta", "Beta", "number"),
+        ],
+    }
+
+    sections = []
+    ratio_values = {}
+    section_titles = {
+        "income_statement": "KẾT QUẢ KINH DOANH (TỶ ĐỒNG)",
+        "balance_sheet": "BẢNG CÂN ĐỐI KẾ TOÁN (TỶ ĐỒNG)",
+        "cash_flow": "LƯU CHUYỂN TIỀN TỆ (TỶ ĐỒNG)",
+        "ratio": "CHỈ SỐ TÀI CHÍNH",
+    }
+    for sheet_name, items in selected_items.items():
+        sheet = sheets[sheet_name]
+        matches_ticker = (
+            sheet["ticker"].astype("string").str.strip().str.upper().eq(ticker)
+        )
+        ticker_sheet = sheet.loc[matches_ticker]
+        rows = []
+        for item_id, label, value_type in items:
+            matches = ticker_sheet.loc[ticker_sheet["item_id"].eq(item_id)]
+            if matches.empty:
+                continue
+            values = matches[years].apply(pd.to_numeric, errors="coerce")
+            populated = values.notna().any(axis=1)
+            if not populated.any():
+                continue
+            source_row = matches.loc[populated].iloc[-1]
+            raw_values = source_row[years].apply(pd.to_numeric, errors="coerce")
+            if value_type == "billions":
+                formatted_values = [
+                    f"{value / 1_000_000_000:,.1f}" if pd.notna(value) else "–"
+                    for value in raw_values
+                ]
+            elif value_type == "currency":
+                formatted_values = [
+                    f"{value:,.0f} đ" if pd.notna(value) else "–"
+                    for value in raw_values
+                ]
+            elif value_type == "percent":
+                formatted_values = [
+                    f"{value:.2f}%" if pd.notna(value) else "–"
+                    for value in raw_values
+                ]
+            elif value_type == "number":
+                formatted_values = [
+                    f"{value:.2f}" if pd.notna(value) else "–"
+                    for value in raw_values
+                ]
+            else:
+                formatted_values = [
+                    f"{value:.2f}x" if pd.notna(value) else "–"
+                    for value in raw_values
+                ]
+            rows.append({"label": label, "values": formatted_values})
+            if sheet_name == "ratio":
+                ratio_values[item_id] = raw_values.iloc[0]
+
+        if rows:
+            sections.append({"title": section_titles[sheet_name], "rows": rows})
+
+    return years, sections, ratio_values
+
+
+def load_stock_report_data(ticker, csv_path=None, financial_path=None):
+    """Build report-template data from the merged historical stock CSV."""
+    project_root = Path(__file__).resolve().parent.parent
+    csv_path = Path(csv_path) if csv_path else project_root / "output" / "stock_data.csv"
+    if not csv_path.is_absolute():
+        csv_path = project_root / csv_path
+
+    ticker = str(ticker).strip().upper()
+    if not ticker:
+        raise ValueError("Vui lòng nhập mã cổ phiếu.")
+
+    history_all = pd.read_csv(csv_path)
+    required_columns = {"symbol", "date", "close", "high", "low", "volume"}
+    missing_columns = required_columns.difference(history_all.columns)
+    if missing_columns:
+        raise ValueError(
+            f"CSV thiếu các cột bắt buộc: {', '.join(sorted(missing_columns))}"
+        )
+
+    symbols = history_all["symbol"].astype("string").str.strip().str.upper()
+    history = history_all.loc[symbols == ticker].copy()
+    if history.empty:
+        available = ", ".join(sorted(symbols.dropna().unique()))
+        raise ValueError(
+            f"Không tìm thấy mã {ticker} trong {csv_path}. Mã có sẵn: {available}"
+        )
+
+    history["date"] = pd.to_datetime(history["date"], errors="coerce")
+    for column in ("close", "high", "low", "volume"):
+        history[column] = pd.to_numeric(history[column], errors="coerce")
+    history = history.dropna(subset=["date", "close"]).sort_values("date")
+    if history.empty:
+        raise ValueError(f"Mã {ticker} không có ngày giao dịch hoặc giá đóng cửa hợp lệ.")
+
+    financial_path = (
+        financial_path
+        if financial_path is not None
+        else project_root / "data" / "processed" / "tv2_financial_data.xlsx"
+    )
+    financial_years, financial_sections, financial_ratios = _load_financial_data(
+        ticker, financial_path
+    )
+
+    latest = history.iloc[-1]
+    latest_date = latest["date"]
+    recent_history = history.loc[
+        history["date"] >= latest_date - pd.Timedelta(days=365)
     ]
-    
-    for fp, fbp in zip(font_paths, font_bold_paths):
-        if os.path.exists(fp):
-            try:
-                pdfmetrics.registerFont(TTFont('VietnameseFont', fp))
-                bold_path = fbp if os.path.exists(fbp) else fp
-                pdfmetrics.registerFont(TTFont('VietnameseFont-Bold', bold_path))
-                return 'VietnameseFont', 'VietnameseFont-Bold'
-            except Exception:
-                pass
-                
-    return "Helvetica", "Helvetica-Bold"
+    volume_20d = history["volume"].dropna().tail(20)
+    source = latest.get("source")
+    source = str(source) if pd.notna(source) else "CSV stock_data.csv"
+    sources = [f"{source} — output/stock_data.csv"]
+    if financial_sections:
+        sources.append(f"data/processed/{Path(financial_path).name}")
+    company_name = latest.get("organ_name")
+    company_name = str(company_name) if pd.notna(company_name) else ticker
+    exchange = latest.get("exchange")
+    exchange = str(exchange) if pd.notna(exchange) else "Chưa có dữ liệu"
 
-class NumberedCanvas(canvas.Canvas):
-    """Canvas vẽ Header & Footer chuyên nghiệp hỗ trợ đếm tổng số trang"""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._saved_page_states = []
+    technical_points = [
+        f"Giá đóng cửa ngày {latest_date:%d/%m/%Y}: "
+        f"{_format_price(latest['close'])} nghìn đồng/cổ phiếu."
+    ]
+    for column, label in (("MA20", "MA20"), ("MA50", "MA50"), ("RSI14", "RSI 14")):
+        value = pd.to_numeric(latest.get(column), errors="coerce")
+        formatted = _format_indicator(value)
+        if formatted is not None:
+            technical_points.append(f"{label}: {formatted}.")
 
-    def showPage(self):
-        self._saved_page_states.append(dict(self.__dict__))
-        self._startPage()
+    moving_average = pd.to_numeric(latest.get("MA20"), errors="coerce")
+    close = float(latest["close"])
+    if pd.notna(moving_average):
+        relation = "trên" if close >= moving_average else "dưới"
+        technical_points.append(f"Giá đóng cửa đang {relation} MA20.")
 
-    def save(self):
-        num_pages = len(self._saved_page_states)
-        for state in self._saved_page_states:
-            self.__dict__.update(state)
-            self.draw_page_decorations(num_pages)
-            super().showPage()
-        super().save()
+    summary_parts = list(technical_points)
+    for item_id, label, suffix in (
+        ("roe", "ROE", "%"),
+        ("pe_ratio", "P/E", "x"),
+        ("pb_ratio", "P/B", "x"),
+    ):
+        value = financial_ratios.get(item_id)
+        if value is not None and pd.notna(value):
+            summary_parts.append(
+                f"{label} năm {financial_years[0]}: {value:.2f}{suffix}."
+            )
 
-    def draw_page_decorations(self, page_count):
-        self.saveState()
-        # Dải màu trang trí phía trên Header
-        self.setFillColor(colors.HexColor('#0F172A'))
-        self.rect(0, 782, 612, 10, fill=True, stroke=False)
-        self.setFillColor(colors.HexColor('#2563EB'))
-        self.rect(0, 778, 612, 4, fill=True, stroke=False)
-        
-        # Dùng font hỗ trợ tiếng Việt cho Footer
-        registered_fonts = pdfmetrics.getRegisteredFontNames()
-        font_to_use = 'VietnameseFont' if 'VietnameseFont' in registered_fonts else 'Helvetica'
-        
-        self.setFont(font_to_use, 8)
-        self.setFillColor(colors.HexColor('#64748B'))
-        today_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-        self.drawString(36, 20, f"Báo cáo tự động được tạo lúc: {today_str} | Hệ thống Phân tích Đầu tư Chứng khoán")
-        self.drawRightString(576, 20, f"Trang {self._pageNumber} / {page_count}")
-        self.restoreState()
+    return {
+        "ticker": ticker,
+        "company_name": company_name,
+        "report_date": date.today().strftime("%d/%m/%Y"),
+        "recommendation": "—",
+        "target_price": "—",
+        "upside": "—",
+        "exchange": exchange,
+        "industry": "Chưa có dữ liệu",
+        "current_price": _format_price(close),
+        "investment_horizon": "Dữ liệu lịch sử",
+        "price_chart": _price_chart_data_uri(history),
+        "price_source": (
+            f"{source} — output/stock_data.csv; "
+            "giá theo nghìn đồng/cổ phiếu"
+        ),
+        "market_cap": "—",
+        "shares_outstanding": "—",
+        "avg_volume_20d": (
+            f"{volume_20d.mean() / 1_000_000:,.2f} triệu CP"
+            if not volume_20d.empty
+            else "—"
+        ),
+        "price_52w_range": (
+            f"{_format_price(recent_history['low'].min())} – "
+            f"{_format_price(recent_history['high'].max())}"
+        ),
+        "foreign_ownership": "—",
+        "beta": _format_indicator(financial_ratios.get("beta")) or "—",
+        "financial_years": financial_years,
+        "financial_sections": financial_sections,
+        "investment_thesis": (
+            "Báo cáo tổng hợp dữ liệu giá lịch sử và chỉ báo kỹ thuật từ CSV. "
+            + (
+                "Số liệu tài chính được lấy từ workbook BCTC; "
+                "các năm báo cáo được ghi theo nguồn dữ liệu."
+                if financial_sections
+                else f"Workbook BCTC hiện chưa có dữ liệu cho mã {ticker}."
+            )
+        ),
+        "ai_summary": " ".join(summary_parts),
+        "investment_points": technical_points[1:],
+        "key_risks": [
+            (
+                "Workbook BCTC hiện chưa có dữ liệu cho mã này."
+                if not financial_sections
+                else "Một số chỉ tiêu định giá và thông tin doanh nghiệp chưa có trong dữ liệu đầu vào."
+            ),
+            "Dữ liệu giá lịch sử và chỉ báo kỹ thuật không đảm bảo kết quả trong tương lai.",
+        ],
+        "analyst_name": "Tổng hợp dữ liệu cổ phiếu",
+        "analyst_contact": "",
+        "data_sources": "; ".join(sources),
+        "data_as_of": latest_date.strftime("%d/%m/%Y"),
+    }
 
-def generate_pdf(data_dict: dict, output_path: str = "outputs/stock_report.pdf") -> str:
+
+def generate_pdf(data_dict, output_path="outputs/stock_report.pdf"):
     """
-    Hàm nhận dictionary dữ liệu và xuất ra file PDF báo cáo chuẩn tiếng Việt
+    Hàm xuất file PDF báo cáo phân tích cổ phiếu từ Jinja2 HTML/CSS Template.
+    Hỗ trợ tự động chuyển đổi giữa WeasyPrint (Streamlit Cloud/Linux)
+    và xhtml2pdf (Fallback cho Windows Local).
     """
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    font_name, font_bold = register_vietnamese_font()
-    
-    doc = SimpleDocTemplate(
-        output_path,
-        pagesize=letter,
-        rightMargin=36,
-        leftMargin=36,
-        topMargin=45,
-        bottomMargin=40
+    project_root = Path(__file__).resolve().parent.parent
+    core_dir = project_root / "core"
+    output_path = Path(output_path)
+    if not output_path.is_absolute():
+        output_path = project_root / output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 1. Nạp HTML Template từ thư mục core/
+    env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(str(core_dir)),
+        autoescape=jinja2.select_autoescape(["html", "xml"]),
     )
-    
-    styles = getSampleStyleSheet()
-    
-    title_style = ParagraphStyle(
-        'DocTitle',
-        parent=styles['Heading1'],
-        fontName=font_bold,
-        fontSize=22,
-        leading=26,
-        textColor=colors.HexColor('#0F172A'),
-        spaceAfter=4
-    )
-    
-    subtitle_style = ParagraphStyle(
-        'SubTitle',
-        parent=styles['Normal'],
-        fontName=font_name,
-        fontSize=11,
-        leading=15,
-        textColor=colors.HexColor('#475569'),
-        spaceAfter=15
-    )
-    
-    heading_style = ParagraphStyle(
-        'SectionHeader',
-        parent=styles['Heading2'],
-        fontName=font_bold,
-        fontSize=13,
-        leading=17,
-        textColor=colors.HexColor('#1E3A8A'),
-        spaceBefore=14,
-        spaceAfter=8
-    )
-    
-    normal_style = ParagraphStyle(
-        'NormalText',
-        parent=styles['Normal'],
-        fontName=font_name,
-        fontSize=10,
-        leading=15,
-        textColor=colors.HexColor('#334155')
-    )
-    
-    table_header_style = ParagraphStyle(
-        'TableHeader',
-        parent=styles['Normal'],
-        fontName=font_bold,
-        fontSize=9,
-        leading=12,
-        textColor=colors.whitesmoke
-    )
-    
-    table_cell_style = ParagraphStyle(
-        'TableCell',
-        parent=styles['Normal'],
-        fontName=font_name,
-        fontSize=9,
-        leading=12,
-        textColor=colors.HexColor('#1E293B')
-    )
+    template = env.get_template('report_template.html')
 
-    story = []
+    # 2. Render dữ liệu vào Template HTML
+    rendered_html = template.render(**data_dict)
+    # A fixed page height lets the absolute footer anchor to the full printed page.
+    layout_css = """
+    <style>
+      .page {
+        position: relative;
+        height: 272mm;
+      }
+      .page-footer {
+        position: absolute;
+        bottom: 0;
+      }
+    </style>
+    """
+    head_end = rendered_html.lower().find("</head>")
+    if head_end == -1:
+        raise ValueError("Template báo cáo thiếu thẻ đóng </head>.")
+    rendered_html = f"{rendered_html[:head_end]}{layout_css}{rendered_html[head_end:]}"
 
-    # 1. Header Báo cáo
-    symbol = data_dict.get("symbol", "N/A")
-    company_name = data_dict.get("company_name", "N/A")
-    
-    story.append(Paragraph(f"BÁO CÁO PHÂN TÍCH CỔ PHIẾU: {symbol}", title_style))
-    story.append(Paragraph(f"<b>Doanh nghiệp:</b> {company_name}", subtitle_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#E2E8F0'), spaceAfter=12))
+    # 3. Tiến hành xuất PDF
+    try:
+        # Ưu tiên WeasyPrint (Chạy chuẩn trên Linux / Streamlit Cloud)
+        from weasyprint import HTML, CSS
+        css_path = core_dir / "report_style.css"
+        HTML(string=rendered_html, base_url=str(core_dir)).write_pdf(
+            str(output_path),
+            stylesheets=[CSS(css_path)] if css_path.exists() else None
+        )
+        print("-> PDF exported successfully with WeasyPrint.")
 
-    # 2. Thẻ Khuyến nghị & Tổng quan (Key KPI Cards)
-    scoring = data_dict.get("scoring", {})
-    rec = scoring.get("recommendation", "N/A")
-    score = scoring.get("total_score", "N/A")
-    price = data_dict.get("price", "N/A")
-    change = data_dict.get("change_percent", "")
-    price_str = f"{price:,} VND" if isinstance(price, (int, float)) else str(price)
-    
-    rec_color = '#16A34A' if 'MUA' in str(rec).upper() else ('#DC2626' if 'BÁN' in str(rec).upper() else '#D97706')
+    except (ImportError, OSError):
+        # Fallback xhtml2pdf dành riêng cho Windows khi thiếu GTK3
+        from xhtml2pdf import pisa
 
-    kpi_card_data = [
-        [
-            Paragraph(f"<font color='#64748B' size=8>GIÁ HIỆN TẠI</font><br/><font size=14><b>{price_str}</b></font><br/><font color='#16A34A' size=9>{change}</font>", normal_style),
-            Paragraph(f"<font color='#64748B' size=8>ĐIỂM ĐÁNH GIÁ</font><br/><font size=14><b>{score} / 10</b></font><br/><font color='#2563EB' size=9>Tổng hợp AI</font>", normal_style),
-            Paragraph(f"<font color='#64748B' size=8>KHUYẾN NGHỊ ĐẦU TƯ</font><br/><font size=13 color='{rec_color}'><b>{rec}</b></font><br/><font color='#64748B' size=8>Trung & Dài hạn</font>", normal_style)
-        ]
-    ]
-    
-    t_kpi = Table(kpi_card_data, colWidths=[180, 180, 180])
-    t_kpi.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
-        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
-        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
-        ('TOPPADDING', (0,0), (-1,-1), 10),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 10),
-        ('LEFTPADDING', (0,0), (-1,-1), 12),
-        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-    ]))
-    story.append(t_kpi)
-    story.append(Spacer(1, 15))
+        def resolve_resource(uri, _):
+            parsed_uri = urlparse(uri)
+            if parsed_uri.scheme:
+                return uri
+            resource_path = Path(unquote(parsed_uri.path))
+            if not resource_path.is_absolute():
+                resource_path = core_dir / resource_path
+            return str(resource_path.resolve())
 
-    # 3. Chỉ số Tài chính Cơ bản
-    story.append(Paragraph("1. Chỉ số Tài chính Cốt lõi", heading_style))
-    fin = data_dict.get("financials", {})
-    fin_rows = [
-        [Paragraph("Chỉ số tài chính", table_header_style), Paragraph("Giá trị thực tế", table_header_style)],
-        [Paragraph("P/E (Chỉ số Định giá)", table_cell_style), Paragraph(str(fin.get("pe", "N/A")), table_cell_style)],
-        [Paragraph("P/B (Chỉ số Giá / Giá trị sổ sách)", table_cell_style), Paragraph(str(fin.get("pb", "N/A")), table_cell_style)],
-        [Paragraph("ROE (Tỷ suất LN trên Vốn chủ sở hữu)", table_cell_style), Paragraph(str(fin.get("roe", "N/A")), table_cell_style)],
-        [Paragraph("Tăng trưởng Doanh thu", table_cell_style), Paragraph(str(fin.get("revenue_growth", "N/A")), table_cell_style)]
-    ]
-    t_fin = Table(fin_rows, colWidths=[300, 240])
-    t_fin.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E293B')),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
-        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#F8FAFC')]),
-        ('TOPPADDING', (0,0), (-1,-1), 6),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-        ('LEFTPADDING', (0,0), (-1,-1), 10),
-    ]))
-    story.append(t_fin)
-    story.append(Spacer(1, 15))
+        with output_path.open("wb") as pdf_file:
+            result = pisa.CreatePDF(
+                src=rendered_html,
+                dest=pdf_file,
+                encoding='utf-8',
+                path=str(core_dir),
+                link_callback=resolve_resource
+            )
+        if result.err:
+            raise RuntimeError(f"xhtml2pdf không thể tạo báo cáo PDF ({result.err} lỗi).")
+        print("-> PDF exported successfully with xhtml2pdf.")
 
-    # 4. Tín hiệu Kỹ thuật
-    story.append(Paragraph("2. Tín hiệu Kỹ thuật", heading_style))
-    tech = data_dict.get("tech_signals", {})
-    ma20_val = tech.get('ma20', 0)
-    ma20_str = f"{ma20_val:,} VND" if isinstance(ma20_val, (int, float)) else str(ma20_val)
-    
-    tech_rows = [
-        [Paragraph("Chỉ báo kỹ thuật", table_header_style), Paragraph("Giá trị / Tín hiệu", table_header_style)],
-        [Paragraph("RSI (14) - Chỉ số sức mạnh tương đối", table_cell_style), Paragraph(str(tech.get("rsi", "N/A")), table_cell_style)],
-        [Paragraph("MA20 - Đường trung bình động 20 ngày", table_cell_style), Paragraph(ma20_str, table_cell_style)],
-        [Paragraph("Tín hiệu MACD", table_cell_style), Paragraph(str(tech.get("macd_signal", "N/A")), table_cell_style)]
-    ]
-    t_tech = Table(tech_rows, colWidths=[300, 240])
-    t_tech.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E293B')),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
-        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#F8FAFC')]),
-        ('TOPPADDING', (0,0), (-1,-1), 6),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-        ('LEFTPADDING', (0,0), (-1,-1), 10),
-    ]))
-    story.append(t_tech)
-    story.append(Spacer(1, 15))
-
-    # 5. Tóm tắt & Nhận định
-    story.append(Paragraph("3. Tóm tắt Nhận định & Đánh giá", heading_style))
-    summary_text = data_dict.get("summary", "Chưa có tóm tắt phân tích.")
-    story.append(Paragraph(summary_text, normal_style))
-
-    # Build PDF
-    doc.build(story, canvasmaker=NumberedCanvas)
-    print(f"✅ Đã xuất PDF thành công tại: {output_path}")
-    return output_path
-
+    return str(output_path)
 
 if __name__ == "__main__":
-    # Thử kết nối dữ liệu từ mock_data
-    try:
-        from mock_data import MOCK_STOCK_DATA
-        generate_pdf(MOCK_STOCK_DATA)
-    except ImportError:
-        sample_vietnamese_data = {
-            "symbol": "FPT",
-            "company_name": "Công ty Cổ phần FPT",
-            "price": 135000,
-            "change_percent": "+1.5%",
-            "tech_signals": {
-                "rsi": 58.4,
-                "ma20": 132000,
-                "macd_signal": "MUA TÍCH LŨY"
-            },
-            "financials": {
-                "pe": 18.2,
-                "pb": 4.1,
-                "roe": "25.5%",
-                "revenue_growth": "16.8%"
-            },
-            "scoring": {
-                "total_score": 8.5,
-                "recommendation": "KHUYẾN NGHỊ MUA"
-            },
-            "summary": "FPT tiếp tục duy trì tốc độ tăng trưởng ổn định nhờ sự bứt phá mạnh mẽ ở mảng xuất khẩu phần mềm và dịch vụ chuyển đổi số toàn cầu. Các chỉ số tài chính lành mạnh với ROE vượt mốc 25%."
-        }
-        generate_pdf(sample_vietnamese_data)
+    parser = argparse.ArgumentParser(
+        description="Xuất báo cáo PDF từ dữ liệu lịch sử trong CSV."
+    )
+    parser.add_argument("ticker", help="Mã cổ phiếu có trong output/stock_data.csv")
+    parser.add_argument(
+        "--csv",
+        type=Path,
+        help="Đường dẫn CSV dữ liệu (mặc định: output/stock_data.csv)",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Đường dẫn PDF đầu ra (mặc định: outputs/<MÃ>_stock_report.pdf)",
+    )
+    args = parser.parse_args()
+
+    report_data = load_stock_report_data(args.ticker, args.csv)
+    output_path = args.output or Path("outputs") / f"{args.ticker.strip().upper()}_stock_report.pdf"
+    generated_path = generate_pdf(report_data, output_path)
+    print(f"PDF saved to: {generated_path}")

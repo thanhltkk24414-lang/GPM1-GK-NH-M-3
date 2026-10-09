@@ -1,9 +1,28 @@
+@font-face {
+    font-family: 'VietnameseFont';
+    src: url('../assets/fonts/arial.ttf');
+}
+
+@font-face {
+    font-family: 'VietnameseFont';
+    src: url('../assets/fonts/arialbd.ttf');
+    font-weight: bold;
+}
+
 @page {
+    size: a4 portrait;
+    margin: 1cm;
+}
+
+body {
+    font-family: 'VietnameseFont';
+}
+page {
   size: A4;
   margin: 12mm 13mm 13mm 13mm;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; font-family: Arial, "DejaVu Sans", sans-serif; color: #14283b; font-size: 9pt; }
+html, body { margin: 0; padding: 0; font-family: 'VietnameseFont'; color: #14283b; font-size: 9pt; }
 body { background: #fff; }
 .page { position: relative; min-height: 272mm; page-break-after: always; }
 .page:last-child { page-break-after: auto; }
@@ -64,3 +83,6 @@ body { background: #fff; }
 .disclaimer { margin-top: 5mm; border: 1px solid #ccd8e3; border-radius: 2px; padding: 3mm 4mm; background: #fbfcfd; }
 .disclaimer h3 { font-size: 7pt; border: 0; padding: 0; margin-bottom: 2mm; }
 .disclaimer p { font-size: 6.5pt; line-height: 1.5; color: #687a89; margin: 0; }
+body, table, td, th, h1, h2, h3, h4, p, div, span, ul, li, strong, header, section, footer {
+    font-family: 'VietnameseFont';
+}

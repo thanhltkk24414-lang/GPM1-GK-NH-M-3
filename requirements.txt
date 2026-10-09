@@ -1,7 +1,8 @@
 streamlit
-vnstock3
 pandas
 reportlab
 jinja2
 pdfkit
 requests
+weasyprint
+openpyxl
