@@ -143,7 +143,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-title">HỆ THỐNG TỔNG HỢP & PHÂN TÍCH CỔ PHIẾU</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">HỆ THỐNG PHÂN TÍCH CƠ HỘI ĐẦU TƯ CỔ PHIẾU</div>', unsafe_allow_html=True)
 
 # Giao diện Nhập liệu dùng Form để chỉ chạy khi nhấn nút
 with st.form("search_form"):
