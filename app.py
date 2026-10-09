@@ -333,17 +333,22 @@ elif analyze_btn and not ticker_input:
 else:
     # Màn hình chào mừng khi chưa nhập mã
     st.markdown("""
-    <div class="welcome-box" style="text-align: center; margin-top: 50px;">
-        <h2 style="color: #e9d8fd; font-family: 'Segoe UI', Tahoma, sans-serif; margin-bottom: 20px; font-weight: 800;">🌌 HỆ THỐNG PHÂN TÍCH ĐÃ SẴN SÀNG</h2>
-        <p style="color: #d6bcfa; font-size: 18px; width: 100%; text-align: center; margin-bottom: 20px; line-height: 1.6;">
-            Vui lòng nhập mã chứng khoán (VD: <b>HPG, VNM, FPT</b>) vào ô tìm kiếm để hệ thống khởi chạy thuật toán tổng hợp:
+    <div class="welcome-box" style="margin-top: 50px;">
+        <p style="color: #d6bcfa; font-size: 18px; max-width: 800px; margin: 0 auto 10px auto; line-height: 1.6;">
+            Dựa trên các nguồn dữ liệu có thể khai thác như:
         </p>
-        <ul style="color: #e2e8f0; font-size: 17px; text-align: left; max-width: 450px; margin: 0 auto; list-style-type: none; padding-left: 0; line-height: 2;">
-            <li>✨ Trích xuất Dữ liệu Giao dịch & Định giá Real-time</li>
-            <li>✨ Phân tích Biểu đồ Diễn biến giá Tự động</li>
-            <li>✨ Tổng hợp Dữ liệu Tài chính chuyên sâu</li>
-            <li>✨ Kết xuất Báo cáo Bản in PDF chuẩn Chuyên gia</li>
+        <ul style="color: #e2e8f0; font-size: 18px; max-width: 800px; margin: 0 auto 20px auto; padding-left: 40px; line-height: 1.8; list-style-type: disc;">
+            <li><b>Giá và dữ liệu giao dịch</b> chứng khoán;</li>
+            <li><b>Báo cáo tài chính và các chỉ số tài chính</b> doanh nghiệp niêm yết;</li>
+            <li><b>Thông tin, tin tức</b> doanh nghiệp cập nhật;</li>
+            <li>Báo cáo phân tích của các công ty chứng khoán – format/trình bày;</li>
+            <li>Các nguồn dữ liệu tài chính và công nghệ phù hợp khác;</li>
         </ul>
-        <p style="color: #b794f4; font-size: 14px; margin-top: 30px;"><em>Trải nghiệm phân tích thông minh và siêu tốc.</em></p>
+        <p style="color: #e9d8fd; font-size: 18px; max-width: 800px; margin: 0 auto 10px auto; line-height: 1.6; font-weight: bold;">
+            Mỗi nhóm hãy thiết kế, xây dựng và vận hành một hệ thống phân tích cơ hội đầu tư vào cổ phiếu bất kỳ; báo cáo phân tích tự động trích xuất ra PDF theo nhu cầu người dùng.
+        </p>
+        <p style="color: #e9d8fd; font-size: 18px; max-width: 800px; margin: 0 auto; line-height: 1.6;">
+            Yêu cầu: <b>chính xác về mặt dữ liệu, kết quả phân tích đánh giá thích hợp và sự sáng tạo</b>
+        </p>
     </div>
     """, unsafe_allow_html=True)
