@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
 import os
+import plotly.graph_objects as go
 from core.report_pdf import load_stock_report_data, generate_pdf
 
 # Cấu hình trang với giao diện rộng
-st.set_page_config(page_title="Hệ Thống Phân Tích Cổ Phiếu", layout="wide")
+st.set_page_config(page_title="Hệ Thống Phân Tích Cổ Phiếu", layout="wide", initial_sidebar_state="collapsed")
 
-# CSS: Nền tím than đậm, đổ bóng, hiệu ứng hover pop-up cho mọi thành phần
+# CSS: Nền tím than đậm, đổ bóng, hiệu ứng hover pop-up
 st.markdown("""
 <style>
     /* Nền tím than đậm toàn trang */
@@ -22,16 +23,17 @@ st.markdown("""
     }
 
     /* Hiệu ứng chung cho các khối: đổ bóng, bo góc, pop-up khi hover */
-    [data-testid="stMetric"], .summary-box, .welcome-box, div[data-testid="stDataFrame"], .image-box {
+    [data-testid="stMetric"], .summary-box, .welcome-box, .image-box {
         background-color: rgba(45, 27, 84, 0.6) !important;
         border-radius: 12px !important;
-        padding: 15px !important;
+        padding: 20px !important;
         box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important;
         transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
         border: 1px solid rgba(159, 122, 234, 0.2) !important;
+        margin-bottom: 15px;
     }
 
-    [data-testid="stMetric"]:hover, .summary-box:hover, .welcome-box:hover, div[data-testid="stDataFrame"]:hover, .image-box:hover {
+    [data-testid="stMetric"]:hover, .summary-box:hover, .welcome-box:hover, .image-box:hover {
         transform: translateY(-6px) scale(1.02) !important;
         box-shadow: 0 15px 25px rgba(159, 122, 234, 0.5) !important;
         border-color: rgba(159, 122, 234, 0.8) !important;
@@ -51,38 +53,22 @@ st.markdown("""
         font-weight: 600 !important;
     }
 
-    /* Input & Buttons */
-    [data-testid="stTextInput"] input {
-        background-color: rgba(255, 255, 255, 0.05);
-        color: #fff;
-        border: 2px solid rgba(159, 122, 234, 0.4);
-        border-radius: 10px;
-        padding: 10px 15px;
-        transition: all 0.3s ease;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
-    }
-    [data-testid="stTextInput"] input:focus, [data-testid="stTextInput"] input:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 15px rgba(159, 122, 234, 0.6);
-        border-color: #b794f4;
-    }
-
-    [data-testid="stButton"] button {
+    /* Bỏ style custom input để tránh lỗi không thấy chữ, chỉ style button */
+    [data-testid="stFormSubmitButton"] button, [data-testid="stDownloadButton"] button {
         background: linear-gradient(135deg, #6b46c1 0%, #805ad5 100%);
-        color: white;
+        color: white !important;
         border: none;
         border-radius: 10px;
         font-weight: bold;
         box-shadow: 0 4px 10px rgba(107, 70, 193, 0.5);
         transition: all 0.3s ease;
         height: auto;
-        padding: 12px 0;
+        padding: 10px 0;
     }
-    [data-testid="stButton"] button:hover {
+    [data-testid="stFormSubmitButton"] button:hover, [data-testid="stDownloadButton"] button:hover {
         transform: scale(1.05) translateY(-3px);
         box-shadow: 0 10px 20px rgba(159, 122, 234, 0.8);
         background: linear-gradient(135deg, #805ad5 0%, #9f7aea 100%);
-        color: white;
     }
 
     /* Typography */
@@ -121,44 +107,71 @@ st.markdown("""
         text-align: center;
     }
     
-    /* Markdown text */
     .stMarkdown p, .stMarkdown li {
         color: #e2e8f0;
         font-size: 16px;
         line-height: 1.6;
     }
     
-    /* Make SVG chart look good on dark mode */
-    .image-box img {
-        filter: drop-shadow(0 0 8px rgba(255,255,255,0.2));
-        border-radius: 8px;
+    .custom-table {
+        width: 100%;
+        border-collapse: collapse;
+        color: #e2e8f0;
+        font-size: 15px;
+    }
+    .custom-table th {
+        border-bottom: 2px solid #805ad5;
+        padding: 12px;
+        text-align: right;
+        color: #d6bcfa;
+    }
+    .custom-table th:first-child {
+        text-align: left;
+    }
+    .custom-table td {
+        border-bottom: 1px solid rgba(159, 122, 234, 0.2);
+        padding: 12px;
+        text-align: right;
+    }
+    .custom-table td:first-child {
+        text-align: left;
+        font-weight: 500;
+    }
+    .custom-table tr:hover {
+        background-color: rgba(159, 122, 234, 0.1);
     }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-title">HỆ THỐNG TỔNG HỢP & PHÂN TÍCH CỔ PHIẾU</div>', unsafe_allow_html=True)
 
-# Giao diện Nhập liệu
-col_input, col_btn, _ = st.columns([2, 1, 3])
-with col_input:
-    ticker = st.text_input("MÃ CHỨNG KHOÁN:", value="", label_visibility="collapsed", placeholder="Nhập mã cổ phiếu (VD: HPG, VNM, ACB)").upper()
-with col_btn:
-    analyze_btn = st.button("🚀 Truy Xuất Báo Cáo", type="primary", use_container_width=True)
+# Giao diện Nhập liệu dùng Form để chỉ chạy khi nhấn nút
+with st.form("search_form"):
+    col_input, col_btn, _ = st.columns([2, 1, 3])
+    with col_input:
+        ticker_input = st.text_input("MÃ CHỨNG KHOÁN:", value="", label_visibility="collapsed", placeholder="Nhập mã cổ phiếu (VD: HPG, VNM, ACB)")
+    with col_btn:
+        analyze_btn = st.form_submit_button("🚀 Truy Xuất Báo Cáo", use_container_width=True)
 
-# Phân tích ngay khi có mã cổ phiếu
-if ticker:
-    with st.spinner(f"Hệ thống đang xử lý và dựng 3D Dashboard cho {ticker}..."):
+if analyze_btn and ticker_input:
+    ticker = ticker_input.strip().upper()
+    with st.spinner(f"Hệ thống đang xử lý dữ liệu cho {ticker}..."):
         try:
             report_data = load_stock_report_data(ticker)
             
+            # Hàm loại bỏ từ workbook
+            def clean_text(text):
+                if not isinstance(text, str): return text
+                return text.replace("workbook ", "").replace("Workbook ", "")
+
             # --- PHẦN HEADER BÁO CÁO ---
             company_name = report_data.get("company_name", ticker)
-            st.markdown(f'<div class="main-title" style="font-size: 28px;">BÁO CÁO PHÂN TÍCH: <span style="color: #fbd38d;">{company_name.upper()}</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="main-title" style="font-size: 28px; margin-top: 20px;">BÁO CÁO PHÂN TÍCH: <span style="color: #fbd38d;">{company_name.upper()}</span></div>', unsafe_allow_html=True)
             
             sub_info = (
                 f"<b>Mã CK:</b> {ticker} &nbsp;|&nbsp; "
                 f"<b>Sàn:</b> {report_data.get('exchange', 'N/A')} &nbsp;|&nbsp; "
-                f"<b>Ngành:</b> {report_data.get('industry', 'N/A')} &nbsp;|&nbsp; "
+                f"<b>Ngành:</b> {clean_text(report_data.get('industry', 'N/A'))} &nbsp;|&nbsp; "
                 f"<b>Ngày Dữ Liệu:</b> {report_data.get('data_as_of', 'N/A')}"
             )
             st.markdown(f'<div class="sub-title">{sub_info}</div>', unsafe_allow_html=True)
@@ -172,15 +185,11 @@ if ticker:
             c3.metric("Giá Mục Tiêu", report_data.get("target_price", "N/A"))
             c4.metric("Tiềm Năng", report_data.get("upside", "N/A"))
 
-            st.write("") 
-
             c5, c6, c7, c8 = st.columns(4)
             c5.metric("Dải Giá 52 Tuần", report_data.get("price_52w_range", "N/A"))
             c6.metric("KLGD 20 Phiên", report_data.get("avg_volume_20d", "N/A"))
             c7.metric("Vốn Hóa", report_data.get("market_cap", "N/A"))
             c8.metric("CP Lưu Hành", report_data.get("shares_outstanding", "N/A"))
-
-            st.write("") 
 
             c9, c10, c11, c12 = st.columns(4)
             c9.metric("Sở Hữu Nước Ngoài", report_data.get("foreign_ownership", "N/A"))
@@ -189,41 +198,74 @@ if ticker:
             c12.metric("Nguồn Giá", report_data.get("price_source", "N/A"))
 
             # --- 2. BIỂU ĐỒ GIÁ ---
-            svg_data = report_data.get("price_chart", "")
-            if svg_data:
-                st.markdown('<div class="section-header">📈 2. Biểu Đồ Diễn Biến Giá</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="image-box"><img src="{svg_data}" width="100%" /></div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-header">📈 2. Biểu Đồ Diễn Biến Giá</div>', unsafe_allow_html=True)
+            
+            # Vẽ biểu đồ nến bằng Plotly thay vì SVG tĩnh
+            try:
+                df_all = pd.read_csv("output/stock_data.csv")
+                df_stock = df_all[df_all['ticker'] == ticker].copy()
+                if not df_stock.empty:
+                    df_stock['date'] = pd.to_datetime(df_stock['date'])
+                    df_stock = df_stock.sort_values('date')
+                    
+                    fig = go.Figure(data=[go.Candlestick(x=df_stock['date'],
+                                    open=df_stock['open'],
+                                    high=df_stock['high'],
+                                    low=df_stock['low'],
+                                    close=df_stock['close'],
+                                    increasing_line_color='#26a69a', decreasing_line_color='#ef5350')])
+                    
+                    fig.update_layout(
+                        template="plotly_dark",
+                        margin=dict(l=20, r=20, t=20, b=20),
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        xaxis_rangeslider_visible=False,
+                        height=400
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Không tìm thấy dữ liệu giá trong CSV để vẽ biểu đồ nến.")
+            except Exception as e:
+                # Fallback to SVG
+                svg_data = report_data.get("price_chart", "")
+                if svg_data:
+                    st.markdown(f'<div class="image-box"><img src="{svg_data}" width="100%" /></div>', unsafe_allow_html=True)
+                else:
+                    st.warning("Không thể hiển thị biểu đồ.")
 
             # --- 3. TÓM TẮT PHÂN TÍCH & LUẬN ĐIỂM ---
             st.markdown('<div class="section-header">🧠 3. Tóm Tắt Phân Tích & Luận Điểm</div>', unsafe_allow_html=True)
             
-            ai_sum = report_data.get('ai_summary', 'Không có dữ liệu phân tích.')
+            ai_sum = clean_text(report_data.get('ai_summary', 'Không có dữ liệu phân tích.'))
             st.markdown(f'<div class="summary-box"><b>Tổng hợp nhận định chuyên sâu:</b><br>{ai_sum}</div>', unsafe_allow_html=True)
             
-            inv_thesis = report_data.get("investment_thesis", "")
+            inv_thesis = clean_text(report_data.get("investment_thesis", ""))
             if inv_thesis:
                 st.markdown(f'<div class="summary-box"><b>Cơ sở luận điểm:</b> {inv_thesis}</div>', unsafe_allow_html=True)
 
             col_points, col_risks = st.columns(2)
             with col_points:
-                st.markdown('<div class="summary-box"><b>✅ Điểm Nhấn Kỹ Thuật/Đầu Tư:</b><br><br>', unsafe_allow_html=True)
+                points_html = '<div class="summary-box"><b>✅ Điểm Nhấn Kỹ Thuật/Đầu Tư:</b><ul style="margin-top: 10px;">'
                 points = report_data.get("investment_points", [])
                 if points:
                     for p in points:
-                        st.markdown(f"- {p}")
+                        points_html += f"<li>{clean_text(p)}</li>"
                 else:
-                    st.markdown("- *(Không có dữ liệu)*")
-                st.markdown('</div>', unsafe_allow_html=True)
+                    points_html += "<li>*(Không có dữ liệu)*</li>"
+                points_html += '</ul></div>'
+                st.markdown(points_html, unsafe_allow_html=True)
             
             with col_risks:
-                st.markdown('<div class="summary-box"><b>⚠️ Rủi Ro Cần Lưu Ý:</b><br><br>', unsafe_allow_html=True)
+                risks_html = '<div class="summary-box"><b>⚠️ Rủi Ro Cần Lưu Ý:</b><ul style="margin-top: 10px;">'
                 risks = report_data.get("key_risks", [])
                 if risks:
                     for r in risks:
-                        st.markdown(f"- {r}")
+                        risks_html += f"<li>{clean_text(r)}</li>"
                 else:
-                    st.markdown("- *(Không có dữ liệu)*")
-                st.markdown('</div>', unsafe_allow_html=True)
+                    risks_html += "<li>*(Không có dữ liệu)*</li>"
+                risks_html += '</ul></div>'
+                st.markdown(risks_html, unsafe_allow_html=True)
 
             # --- 4. DỮ LIỆU TÀI CHÍNH ---
             st.markdown('<div class="section-header">🏦 4. Dữ Liệu Tài Chính & Dự Phóng</div>', unsafe_allow_html=True)
@@ -232,18 +274,25 @@ if ticker:
             if fin_sections:
                 years = report_data.get("financial_years", [])
                 for section in fin_sections:
-                    st.markdown(f"**{section.get('label', '').upper()}**")
-                    table_data = []
+                    st.markdown(f"**{clean_text(section.get('label', '')).upper()}**")
+                    
+                    html_table = "<div class='summary-box'><table class='custom-table'>"
+                    # Header
+                    html_table += "<tr><th>Chỉ Tiêu</th>"
+                    for y in years:
+                        html_table += f"<th>{y}</th>"
+                    html_table += "</tr>"
+                    
+                    # Rows
                     for row in section.get("rows", []):
-                        row_dict = {"Chỉ Tiêu": row.get("label", "")}
+                        html_table += f"<tr><td>{clean_text(row.get('label', ''))}</td>"
                         for i, val in enumerate(row.get("values", [])):
                             if i < len(years):
-                                row_dict[str(years[i])] = val
-                        table_data.append(row_dict)
+                                html_table += f"<td>{val}</td>"
+                        html_table += "</tr>"
+                    html_table += "</table></div>"
                     
-                    if table_data:
-                        df = pd.DataFrame(table_data)
-                        st.dataframe(df, use_container_width=True, hide_index=True)
+                    st.markdown(html_table, unsafe_allow_html=True)
             else:
                 st.write("*(Chưa có dữ liệu tài chính cho mã này)*")
 
@@ -279,20 +328,22 @@ if ticker:
 
         except Exception as e:
             st.error(f"Đã xảy ra lỗi: {e}")
+elif analyze_btn and not ticker_input:
+    st.warning("Vui lòng nhập mã cổ phiếu!")
 else:
     # Màn hình chào mừng khi chưa nhập mã
     st.markdown("""
     <div class="welcome-box" style="text-align: center; margin-top: 50px;">
         <h2 style="color: #e9d8fd; font-family: 'Segoe UI', Tahoma, sans-serif; margin-bottom: 20px; font-weight: 800;">🌌 HỆ THỐNG PHÂN TÍCH ĐÃ SẴN SÀNG</h2>
-        <p style="color: #d6bcfa; font-size: 18px; max-width: 600px; margin: 0 auto; line-height: 1.6;">
+        <p style="color: #d6bcfa; font-size: 18px; width: 100%; text-align: center; margin-bottom: 20px; line-height: 1.6;">
             Vui lòng nhập mã chứng khoán (VD: <b>HPG, VNM, FPT</b>) vào ô tìm kiếm để hệ thống khởi chạy thuật toán tổng hợp:
         </p>
-        <ul style="color: #e2e8f0; font-size: 17px; text-align: left; max-width: 450px; margin: 30px auto; line-height: 2;">
+        <ul style="color: #e2e8f0; font-size: 17px; text-align: left; max-width: 450px; margin: 0 auto; list-style-type: none; padding-left: 0; line-height: 2;">
             <li>✨ Trích xuất Dữ liệu Giao dịch & Định giá Real-time</li>
             <li>✨ Phân tích Biểu đồ Diễn biến giá Tự động</li>
             <li>✨ Tổng hợp Dữ liệu Tài chính chuyên sâu</li>
             <li>✨ Kết xuất Báo cáo Bản in PDF chuẩn Chuyên gia</li>
         </ul>
-        <p style="color: #b794f4; font-size: 14px; margin-top: 20px;"><em>Trải nghiệm phân tích thông minh, siêu tốc và bắt mắt.</em></p>
+        <p style="color: #b794f4; font-size: 14px; margin-top: 30px;"><em>Trải nghiệm phân tích thông minh và siêu tốc.</em></p>
     </div>
     """, unsafe_allow_html=True)
