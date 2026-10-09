@@ -203,7 +203,7 @@ if analyze_btn and ticker_input:
             # Vẽ biểu đồ nến bằng Plotly thay vì SVG tĩnh
             try:
                 df_all = pd.read_csv("output/stock_data.csv")
-                df_stock = df_all[df_all['ticker'] == ticker].copy()
+                df_stock = df_all[df_all['symbol'] == ticker].copy()
                 if not df_stock.empty:
                     df_stock['date'] = pd.to_datetime(df_stock['date'])
                     df_stock = df_stock.sort_values('date')
