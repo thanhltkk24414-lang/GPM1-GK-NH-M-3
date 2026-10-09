@@ -1,0 +1,31 @@
+{
+  "symbol": "FPT",
+  "recommendation": "MUA",
+  "total_score": 76,
+  "scores": {
+    "technical": 45,
+    "fundamental": 100,
+    "news": 60
+  },
+  "target_price": 124.5,
+  "upside": 0.2645,
+  "reasons": [
+    "Tín hiệu kết hợp: RSI quá bán và P/E thấp hơn ngành (+5 điểm)",
+    "P/E 12.1 thấp hơn P/E ngành 15.3: định giá hấp dẫn",
+    "P/B 2.4 thấp hơn P/B ngành 2.8",
+    "ROE 21.0% >= 15%: hiệu quả sử dụng vốn tốt",
+    "EPS tăng trưởng 12.0% so với cùng kỳ",
+    "Doanh thu tăng trưởng 15.0%",
+    "Nợ/Vốn chủ sở hữu 0.8 lần: cấu trúc vốn an toàn",
+    "RSI 28.5 < 30: vùng quá bán, có khả năng hồi phục kỹ thuật",
+    "Tin tức thiên tích cực (2 tích cực / 1 tiêu cực trong 3 tin)"
+  ],
+  "risks": [
+    "Giá 98.5 nằm dưới MA50 (101.5): xu hướng trung hạn yếu",
+    "MACD nằm dưới đường tín hiệu: động lượng giảm"
+  ],
+  "ai_summary": "Theo bộ tiêu chí định lượng, cổ phiếu FPT đạt 76/100 điểm, tương ứng khuyến nghị MUA.\n\nCác yếu tố ủng hộ: Tín hiệu kết hợp: RSI quá bán và P/E thấp hơn ngành (+5 điểm); P/E 12.1 thấp hơn P/E ngành 15.3: định giá hấp dẫn; P/B 2.4 thấp hơn P/B ngành 2.8; ROE 21.0% >= 15%: hiệu quả sử dụng vốn tốt; EPS tăng trưởng 12.0% so với cùng kỳ; Doanh thu tăng trưởng 15.0%; Nợ/Vốn chủ sở hữu 0.8 lần: cấu trúc vốn an toàn; RSI 28.5 < 30: vùng quá bán, có khả năng hồi phục kỹ thuật; Tin tức thiên tích cực (2 tích cực / 1 tiêu cực trong 3 tin).\n\nRủi ro cần theo dõi: Giá 98.5 nằm dưới MA50 (101.5): xu hướng trung hạn yếu; MACD nằm dưới đường tín hiệu: động lượng giảm.",
+  "ai_generated": false,
+  "ai_provider": null,
+  "ai_unverified_numbers": []
+}
