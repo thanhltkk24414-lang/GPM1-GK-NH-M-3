@@ -1,9 +1,9 @@
 """
-scoring.py - Logic Engine (TV3 - Phụng)  [phiên bản 2]
+scoring.py - Logic Engine (TV3 - Lạc) [phiên bản 3]
 Nhận dữ liệu từ TV1 (tech, news) và TV2 (fund) -> khuyến nghị MUA / GIỮ / BÁN
-+ giá mục tiêu + nhận định AI + dữ liệu điền vào report_template.html.
-
-Chạy thử:  py core/scoring.py            (đọc data/sample_FPT.json)
++ giá mục tiêu (có phương pháp dự phòng, không còn N/A) + nhận định AI
++ dữ liệu điền vào report_template.html.
+Chạy thử: py core/scoring.py (đọc data/sample_FPT.json)
 """
 import json
 import os
@@ -11,20 +11,52 @@ import re
 import sys
 from datetime import datetime
 
+try:
+    from dotenv import load_dotenv
+except ImportError:  # python-dotenv chưa cài, không làm gì cả
+    load_dotenv = None
+
+
+def _load_ai_env():
+    """Tự động load .env ở root project trước khi kiểm tra AI key."""
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    env_file = os.path.join(project_root, ".env")
+
+    if load_dotenv is None:
+        return
+
+    if os.path.exists(env_file):
+        load_dotenv(env_file, override=False)
+    else:
+        # Fallback: cố load .env từ working directory hiện tại nếu app chạy từ repo root
+        load_dotenv(override=False)
+
+
+_load_ai_env()
+
 # ======================= 1. CẤU HÌNH (chỉnh ở đây) =======================
 WEIGHTS = {"fundamental": 0.40, "technical": 0.35, "news": 0.25}
-BUY_THRESHOLD = 65    # total >= 65 -> MUA
-SELL_THRESHOLD = 45   # total <  45 -> BÁN, còn lại GIỮ
+BUY_THRESHOLD = 65   # total >= 65 -> MUA
+SELL_THRESHOLD = 45  # total < 45 -> BÁN, còn lại GIỮ
 
 POSITIVE_WORDS = ["tăng trưởng", "lợi nhuận tăng", "vượt kế hoạch", "kỷ lục", "cổ tức",
                   "mua vào", "nâng dự báo", "khởi sắc", "hợp đồng", "mở rộng", "lãi"]
 NEGATIVE_WORDS = ["giảm", "lỗ", "sụt giảm", "bán ròng", "vi phạm", "bị phạt", "thanh tra",
                   "đình chỉ", "nợ xấu", "hạ dự báo", "khó khăn", "kiện", "cảnh báo"]
 
+# --- Cấu hình định giá (giả định của nhóm, nên nêu rõ khi thuyết trình) ---
+COST_OF_EQUITY = 0.13               # chi phí vốn chủ sở hữu giả định
+LONG_TERM_G = 0.05                  # tăng trưởng dài hạn giả định
+FAIR_PE_MIN, FAIR_PE_MAX = 8, 20    # P/E hợp lý theo PEG = 1, kẹp trong khoảng này
+MAX_UPSIDE, MIN_UPSIDE = 0.50, -0.30  # chặn kết quả quá lệch
 
 # ======================= 2. HÀM TIỆN ÍCH =======================
 def _clamp(x):
     return max(0, min(100, round(x)))
+
+
+def _clip(x, lo, hi):
+    return max(lo, min(hi, x))
 
 
 def _ok(*vals):
@@ -38,6 +70,30 @@ def _f(x, nd=1, suffix=""):
 
 def _p(x, nd=1):
     return "N/A" if x is None else f"{x * 100:.{nd}f}%"
+
+
+def _ratio(x, limit):
+    """Chuẩn hóa về dạng thập phân. Nếu |x| > limit thì coi là phần trăm (17.56 -> 0.1756).
+    Giúp code chạy đúng dù TV2 trả về 0.1756 hay 17.56."""
+    if x is None:
+        return None
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return None
+    return x / 100 if abs(x) > limit else x
+
+
+def normalize_fund(fund):
+    """Trả về bản sao của fund với các tỷ lệ đã đưa về dạng thập phân (idempotent)."""
+    fund = dict(fund or {})
+    for k in ("ROE", "ROA", "foreign_ownership"):
+        if k in fund:
+            fund[k] = _ratio(fund[k], 1.5)
+    for k in ("EPS_growth", "revenue_growth", "profit_growth"):
+        if k in fund:
+            fund[k] = _ratio(fund[k], 5)
+    return fund
 
 
 # ======================= 3. CHẤM ĐIỂM TỪNG NHÓM =======================
@@ -83,7 +139,6 @@ def score_technical(t):
     if _ok(vol, close, ma20) and vol > 1.5 and close > ma20:
         s += 5
         reasons.append(f"Khối lượng gấp {vol:.1f} lần trung bình kèm giá tăng")
-
     return (_clamp(s) if used else None), reasons, risks
 
 
@@ -141,7 +196,6 @@ def score_fundamental(f):
         elif de < 1:
             s += 5
             reasons.append(f"Nợ/Vốn chủ sở hữu {de:.1f} lần: cấu trúc vốn an toàn")
-
     return (_clamp(s) if used else None), reasons, risks
 
 
@@ -165,17 +219,70 @@ def score_news(n):
 
 
 def compute_target_price(tech, fund):
-    """Định giá tương đối đơn giản: giá mục tiêu = giá hiện tại x (P/E ngành / P/E của mã).
-    Trả về (target_price, upside) hoặc (None, None) nếu thiếu dữ liệu hoặc P/E <= 0."""
-    close, pe, pe_n = tech.get("close"), fund.get("PE"), fund.get("PE_nganh")
-    if not _ok(close, pe, pe_n) or pe <= 0 or pe_n <= 0:
-        return None, None
-    target = close * pe_n / pe
-    return round(target, 1), round(target / close - 1, 4)
+    """Giá mục tiêu theo chuỗi ưu tiên (đơn vị: nghìn đồng, cùng đơn vị với close):
+    1) P/E ngành  2) P/B ngành  3) Định giá nội tại (P/B hợp lý theo ROE, P/E hợp lý theo
+    tăng trưởng)  4) Kỹ thuật (MA50, giữa dải 52 tuần).
+    Chỉ trả None khi không có giá hiện tại.
+    Trả về dict: target_price, upside, method, confidence."""
+    close = tech.get("close")
+    if not _ok(close) or close <= 0:
+        return {"target_price": None, "upside": None,
+                "method": "Không có giá hiện tại", "confidence": None}
+
+    pe, pe_n = fund.get("PE"), fund.get("PE_nganh")
+    pb, pb_n = fund.get("PB"), fund.get("PB_nganh")
+    roe = fund.get("ROE")
+    growth = fund.get("EPS_growth")
+    if growth is None:
+        growth = fund.get("profit_growth")
+
+    if _ok(pe, pe_n) and pe > 0 and pe_n > 0:
+        raw = close * pe_n / pe
+        method, confidence = f"P/E ngành ({pe_n:.1f} lần)", "Cao"
+    elif _ok(pb, pb_n) and pb > 0 and pb_n > 0:
+        raw = close * pb_n / pb
+        method, confidence = f"P/B ngành ({pb_n:.1f} lần)", "Cao"
+    else:
+        estimates, notes = [], []
+        if _ok(roe, pb) and pb > 0:
+            fair_pb = _clip((roe - LONG_TERM_G) / (COST_OF_EQUITY - LONG_TERM_G), 0.5, 5)
+            estimates.append(close * fair_pb / pb)
+            notes.append(f"P/B hợp lý {fair_pb:.2f} lần theo ROE {roe:.1%}")
+        if _ok(growth, pe) and pe > 0:
+            fair_pe = _clip(growth * 100, FAIR_PE_MIN, FAIR_PE_MAX)
+            estimates.append(close * fair_pe / pe)
+            notes.append(f"P/E hợp lý {fair_pe:.0f} lần theo tăng trưởng EPS {growth:.1%}")
+        if estimates:
+            raw = sum(estimates) / len(estimates)
+            method = "Định giá nội tại (thiếu P/E, P/B ngành): " + "; ".join(notes)
+            confidence = "Trung bình"
+        else:
+            refs = [tech.get("MA50")]
+            lo, hi = tech.get("low_52w"), tech.get("high_52w")
+            if _ok(lo, hi):
+                refs.append((lo + hi) / 2)
+            refs = [x for x in refs if x]
+            if refs:
+                raw = sum(refs) / len(refs)
+                method, confidence = "Kỹ thuật (hồi về MA50 / giữa dải 52 tuần)", "Thấp"
+            else:
+                raw = close
+                method, confidence = "Thiếu dữ liệu, giữ nguyên giá hiện tại", "Rất thấp"
+
+    # Chặn kết quả quá lệch (vd P/E mã quá thấp so với ngành)
+    up = raw / close - 1
+    if up > MAX_UPSIDE or up < MIN_UPSIDE:
+        raw = close * (1 + _clip(up, MIN_UPSIDE, MAX_UPSIDE))
+        method += f" (đã giới hạn tiềm năng trong khoảng {MIN_UPSIDE:.0%} đến {MAX_UPSIDE:+.0%})"
+
+    target = round(raw, 1)
+    return {"target_price": target, "upside": round(target / close - 1, 4),
+            "method": method, "confidence": confidence}
 
 
 # ======================= 4. TỔNG HỢP =======================
 def get_recommendation(tech, fund, news, use_ai=True):
+    fund = normalize_fund(fund)
     sc_t, r_t, k_t = score_technical(tech)
     sc_f, r_f, k_f = score_fundamental(fund)
     sc_n, r_n, k_n = score_news(news)
@@ -187,7 +294,6 @@ def get_recommendation(tech, fund, news, use_ai=True):
         raise ValueError("Không có dữ liệu nào để chấm điểm")
     wsum = sum(WEIGHTS[k] for k in avail)
     total = sum(WEIGHTS[k] * v for k, v in avail.items()) / wsum
-
     reasons, risks = r_f + r_t + r_n, k_f + k_t + k_n
 
     # Quy tắc kết hợp (ví dụ của nhóm trưởng): RSI quá bán + P/E thấp hơn ngành -> cộng thêm
@@ -198,15 +304,17 @@ def get_recommendation(tech, fund, news, use_ai=True):
 
     total = _clamp(total)
     rec = "MUA" if total >= BUY_THRESHOLD else ("BÁN" if total < SELL_THRESHOLD else "GIỮ")
-    target_price, upside = compute_target_price(tech, fund)
+    tp = compute_target_price(tech, fund)
 
     result = {
         "symbol": tech.get("symbol") or fund.get("symbol"),
         "recommendation": rec,
         "total_score": total,
         "scores": scores,
-        "target_price": target_price,   # nghìn đồng, None nếu thiếu dữ liệu
-        "upside": upside,               # 0.26 = +26%, None nếu thiếu dữ liệu
+        "target_price": tp["target_price"],   # nghìn đồng, None chỉ khi thiếu giá hiện tại
+        "upside": tp["upside"],               # 0.26 = +26%
+        "target_method": tp["method"],
+        "target_confidence": tp["confidence"],
         "reasons": reasons,
         "risks": risks or ["Chưa phát hiện rủi ro nổi bật theo bộ quy tắc hiện tại"],
         "ai_summary": "",
@@ -239,6 +347,7 @@ def build_facts(tech, fund, result):
         f"Khuyến nghị của hệ thống: {result['recommendation']} (điểm tổng hợp {result['total_score']}/100)",
         f"Điểm thành phần: {result['scores']}",
         f"Giá mục tiêu (nghìn đồng): {result['target_price']}, tiềm năng: {result['upside']}",
+        f"Phương pháp định giá: {result['target_method']} (độ tin cậy: {result['target_confidence']})",
         f"Chỉ số kỹ thuật: {json.dumps(tech, ensure_ascii=False)}",
         f"Chỉ số cơ bản: {json.dumps(fund, ensure_ascii=False)}",
         "Luận điểm ủng hộ: " + "; ".join(result["reasons"]),
@@ -257,6 +366,7 @@ YÊU CẦU:
 - Viết tiếng Việt, văn phong chuyên nghiệp, trung lập như báo cáo CTCK.
 - Độ dài 120-180 từ, gồm 3 đoạn ngắn: (1) bức tranh chung và khuyến nghị, (2) luận điểm chính về cơ bản và kỹ thuật, (3) rủi ro cần theo dõi.
 - CHỈ sử dụng các con số có trong dữ liệu ở trên. Tuyệt đối không bịa thêm số liệu, giá mục tiêu hay dự báo.
+- Nêu ngắn gọn phương pháp tính giá mục tiêu và độ tin cậy như trong dữ liệu; nếu độ tin cậy là Thấp hoặc Rất thấp thì nói rõ đây chỉ là ước tính tham khảo.
 - Không hứa hẹn lợi nhuận, không dùng từ "chắc chắn", "đảm bảo".
 - Khuyến nghị phải đúng với kết quả của hệ thống, không tự đổi.
 - Không dùng markdown, không dùng tiêu đề, chỉ văn bản thường."""
@@ -273,9 +383,8 @@ def _gemini(prompt):
 def _anthropic(prompt):
     import anthropic  # py -m pip install anthropic
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    m = client.messages.create(
-        model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5"), max_tokens=800,
-        messages=[{"role": "user", "content": prompt}])
+    m = client.messages.create(model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5"), max_tokens=800,
+                               messages=[{"role": "user", "content": prompt}])
     return m.content[0].text.strip()
 
 
@@ -309,6 +418,14 @@ def call_ai(prompt):
     raise RuntimeError(" | ".join(errors))
 
 
+def _isnum(x):
+    try:
+        float(x)
+        return True
+    except ValueError:
+        return False
+
+
 def check_numbers(text, facts):
     """Trả về các số trong văn bản AI mà KHÔNG xuất hiện trong dữ liệu đầu vào (nghi bịa số)."""
     def nums(s):
@@ -318,20 +435,15 @@ def check_numbers(text, facts):
     return sorted(n for n in nums(text) if n not in allowed)
 
 
-def _isnum(x):
-    try:
-        float(x)
-        return True
-    except ValueError:
-        return False
-
-
 def fallback_summary(r):
     """Văn bản dự phòng khi API lỗi: ghép từ kết quả rule engine."""
     p1 = (f"Theo bộ tiêu chí định lượng, cổ phiếu {r['symbol']} đạt {r['total_score']}/100 điểm, "
           f"tương ứng khuyến nghị {r['recommendation']}.")
+    if r.get("target_price") is not None:
+        p1 += (f" Giá mục tiêu {r['target_price']:,.1f} nghìn đồng "
+               f"(tiềm năng {r['upside'] * 100:+.1f}%), tính theo {r['target_method']}.")
     p2 = ("Các yếu tố ủng hộ: " + "; ".join(r["reasons"]) + ".") if r["reasons"] else \
-         "Hiện chưa có yếu tố ủng hộ nổi bật."
+        "Hiện chưa có yếu tố ủng hộ nổi bật."
     p3 = "Rủi ro cần theo dõi: " + "; ".join(r["risks"]) + "."
     return "\n\n".join([p1, p2, p3])
 
@@ -340,11 +452,13 @@ def fallback_summary(r):
 def to_report_context(rec, tech, fund, company_name="", exchange="", industry=""):
     """Đổi kết quả sang đúng tên biến trong core/report_template.html (TV4, TV5 dùng).
     Truyền dict này vào template.render(**context)."""
+    fund = normalize_fund(fund)
     sc = rec["scores"]
     thesis = (f"Hệ thống chấm {rec['total_score']}/100 điểm "
               f"(cơ bản {sc['fundamental']}, kỹ thuật {sc['technical']}, tin tức {sc['news']}), "
               f"tương ứng khuyến nghị {rec['recommendation']}. "
-              f"Giá mục tiêu được tính theo phương pháp P/E ngành.")
+              f"Giá mục tiêu tính theo: {rec.get('target_method', 'N/A')} "
+              f"(độ tin cậy {rec.get('target_confidence') or 'N/A'}).")
     price_range = "N/A"
     if _ok(tech.get("low_52w"), tech.get("high_52w")):
         price_range = f"{tech['low_52w']:,.1f} - {tech['high_52w']:,.1f}"
@@ -364,7 +478,8 @@ def to_report_context(rec, tech, fund, company_name="", exchange="", industry=""
             row("Doanh thu", _p(fund.get("revenue_growth"))),
             row("Lợi nhuận", _p(fund.get("profit_growth"))),
             row("EPS", _p(fund.get("EPS_growth")))]},
-        {"title": "Cấu trúc vốn", "rows": [row("Nợ/Vốn chủ sở hữu (lần)", _f(fund.get("debt_to_equity")))]},
+        {"title": "Cấu trúc vốn", "rows": [
+            row("Nợ/Vốn chủ sở hữu (lần)", _f(fund.get("debt_to_equity")))]},
     ]
     return {
         "ticker": rec["symbol"],
@@ -373,6 +488,8 @@ def to_report_context(rec, tech, fund, company_name="", exchange="", industry=""
         "recommendation": rec["recommendation"],
         "target_price": _f(rec["target_price"]),
         "upside": "N/A" if rec["upside"] is None else f"{rec['upside'] * 100:+.1f}%",
+        "target_method": rec.get("target_method", ""),
+        "target_confidence": rec.get("target_confidence") or "",
         "exchange": exchange or "N/A",
         "industry": industry or "N/A",
         "current_price": _f(tech.get("close")),
@@ -394,9 +511,9 @@ def to_report_context(rec, tech, fund, company_name="", exchange="", industry=""
         "key_risks": rec["risks"],
         "data_sources": sources,
         "data_as_of": tech.get("as_of") or fund.get("as_of") or "N/A",
-        "analyst_name": "Nhóm phân tích",   # sửa thành tên nhóm / tên thành viên nếu muốn
+        "analyst_name": "Nhóm phân tích",  # sửa thành tên nhóm / tên thành viên nếu muốn
         "analyst_contact": "",
-        "disclaimer": "",                   # để trống: template dùng đoạn miễn trừ trách nhiệm mặc định
+        "disclaimer": "",  # để trống: template dùng đoạn miễn trừ trách nhiệm mặc định
     }
 
 
