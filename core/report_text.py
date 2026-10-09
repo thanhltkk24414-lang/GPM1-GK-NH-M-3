@@ -20,7 +20,7 @@ import re
 import unicodedata
 
 try:
-    import fitz  # PyMuPDF
+    import pymupdf as fitz
 except ImportError:
     print("Thieu thu vien PyMuPDF.")
     print("Hay chay lenh: python -m pip install pymupdf")
@@ -39,58 +39,92 @@ SUMMARY_DIR = ROOT_DIR / "reports" / "annual_report_summaries"
 LOG_FILE = ROOT_DIR / "reports" / "annual_report_text_log.csv"
 
 MIN_TEXT_LENGTH = 200
+MIN_TEXT_PER_PAGE = 80
+MIN_ANNUAL_REPORT_PAGES = 5
 
 
 # Tu khoa cho cac chu de trong bao cao thuong nien
 TOPICS = {
     "Tong quan doanh nghiep": [
-        "gioi thieu cong ty",
-        "tong quan doanh nghiep",
-        "company overview",
-        "general information",
         "linh vuc kinh doanh",
-        "nganh nghe kinh doanh",
+        "hoat dong kinh doanh chinh",
+        "cung cap dich vu",
+        "san pham va dich vu",
+        "business segments",
+        "core business",
+        "company operates",
+        "business activities",
+        "thi truong hoat dong",
     ],
     "Ket qua kinh doanh": [
+        "doanh thu thuan",
+        "doanh thu hop nhat",
+        "loi nhuan sau thue",
+        "loi nhuan truoc thue",
+        "tang truong doanh thu",
+        "tang truong loi nhuan",
         "ket qua kinh doanh",
-        "doanh thu",
-        "loi nhuan",
-        "business results",
-        "revenue",
-        "profit",
-        "financial performance",
+        "net revenue",
+        "profit after tax",
+        "profit before tax",
+        "revenue growth",
+        "profit growth",
+        "ebitda",
     ],
     "Tinh hinh tai chinh": [
-        "tinh hinh tai chinh",
-        "tai san",
-        "nguon von",
+        "tong tai san",
+        "tong no phai tra",
+        "von chu so huu",
+        "dong tien kinh doanh",
+        "no vay",
         "financial position",
+        "balance sheet",
+        "cash flow",
         "total assets",
-        "liabilities",
-        "equity",
+        "total liabilities",
+        "shareholders equity",
+        "working capital",
+        "debt ratio",
+        "liquidity",
+        "nguon von",
     ],
     "Chien luoc va ke hoach": [
         "chien luoc phat trien",
         "ke hoach kinh doanh",
+        "muc tieu trong nam",
         "dinh huong phat trien",
+        "ke hoach dau tu",
         "business strategy",
         "development strategy",
         "business plan",
+        "strategic priorities",
+        "investment plan",
     ],
     "Rui ro kinh doanh": [
         "rui ro",
         "quan tri rui ro",
+        "rui ro tai chinh",
+        "rui ro thi truong",
+        "rui ro hoat dong",
         "risk management",
-        "business risks",
         "risk factors",
+        "business risks",
+        "market volatility",
+        "cyber security risk",
+        "exchange rate risk",
     ],
     "Phat trien ben vung": [
         "phat trien ben vung",
-        "bao ve moi truong",
         "trach nhiem xa hoi",
+        "bao ve moi truong",
+        "giam phat thai",
+        "phat thai carbon",
+        "phat trien cong dong",
         "sustainability",
         "environment",
         "social responsibility",
+        "carbon emissions",
+        "net zero",
     ],
 }
 
@@ -127,7 +161,8 @@ def normalize_text(text):
         if unicodedata.category(char) != "Mn"
     )
 
-    return text.lower()
+    # Vietnamese d-stroke is not decomposed by Unicode NFD.
+    return text.lower().replace("đ", "d")
 
 
 def clean_text(text):
@@ -158,12 +193,29 @@ def extract_pdf_text(pdf_path):
     """
 
     page_texts = []
+    ocr_pages = 0
 
     with fitz.open(pdf_path) as document:
         page_count = len(document)
 
         for page_number, page in enumerate(document, start=1):
             page_text = page.get_text("text").strip()
+
+            # PDF scan: thử OCR tiếng Việt nếu Tesseract và pytesseract có sẵn.
+            if len(page_text) < 40:
+                try:
+                    import pytesseract
+                    from PIL import Image
+                    import io
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                    image = Image.open(io.BytesIO(pix.tobytes("png")))
+                    ocr_text = pytesseract.image_to_string(image, lang="vie+eng")
+                    if len(ocr_text.strip()) > len(page_text):
+                        page_text = ocr_text.strip()
+                        ocr_pages += 1
+                except Exception:
+                    # Giữ văn bản có sẵn; trạng thái bên dưới sẽ báo cần OCR.
+                    pass
 
             if page_text:
                 page_texts.append(
@@ -173,7 +225,7 @@ def extract_pdf_text(pdf_path):
 
     full_text = clean_text("\n".join(page_texts))
 
-    return full_text, page_count
+    return full_text, page_count, ocr_pages
 
 
 # ============================================================
@@ -209,23 +261,27 @@ def split_sentences(text):
 # ============================================================
 
 def make_summary(text, pdf_name, page_count):
-    """
-    Tao tom tat nhanh bang cach trich cac cau tu PDF.
-    Khong tu tao so lieu hay ket luan khong co trong tai lieu.
-    """
+    """Create a concise extractive summary without inventing claims or figures."""
+
+    def clip_sentence(sentence, limit):
+        sentence = " ".join(sentence.split())
+        if len(sentence) <= limit:
+            return sentence
+        front_size = int(limit * 0.58)
+        back_size = limit - front_size - 5
+        front = sentence[:front_size].rsplit(" ", 1)[0].rstrip(" ,;:-")
+        back = sentence[-back_size:].lstrip(" ,;:-")
+        if " " in back:
+            back = back.split(" ", 1)[1]
+        return front + " ... " + back
 
     lines = [
-        "TOM TAT NHANH BAO CAO THUONG NIEN",
+        "TOM TAT BAO CAO THUONG NIEN",
         "=" * 65,
         f"Ten file: {pdf_name}",
         f"So trang PDF: {page_count}",
-        f"So ky tu trich xuat: {len(text):,}",
-        f"Thoi gian xu ly: {datetime.now():%Y-%m-%d %H:%M:%S}",
         "",
-        "GHI CHU:",
-        "- Tom tat duoc tao tu van ban trich xuat trong PDF.",
-        "- Can doi chieu voi bao cao goc truoc khi su dung so lieu.",
-        "- PDF scan co the khong trich xuat duoc van ban neu chua OCR.",
+        "Cac y duoi day duoc trich tu bao cao goc; so lieu va dien giai can doi chieu tai lieu.",
         "",
     ]
 
@@ -246,74 +302,109 @@ def make_summary(text, pdf_name, page_count):
             "",
         ])
 
-    # Trich phan dau van ban
-    lines.extend([
-        "1. NOI DUNG DAU BAO CAO",
-        "-" * 45,
-        text[:2000],
-        "",
-    ])
+    source_sentences = []
+    for sentence in split_sentences(text):
+        page_match = re.search(r"---\s*TRANG\s+(\d+)\s*--", sentence, re.I)
+        page_number = page_match.group(1) if page_match else ""
+        clean_sentence = re.sub(r"---\s*TRANG\s+\d+\s*--", " ", sentence, flags=re.I)
+        clean_sentence = re.sub(r"[•▪●]", " ", clean_sentence)
+        clean_sentence = " ".join(clean_sentence.split()).strip(" -|;:")
+        normalized = normalize_text(clean_sentence)
 
-    sentences = split_sentences(text)
-    normalized_sentences = [
-        (sentence, normalize_text(sentence))
-        for sentence in sentences
-    ]
+        # Skip contents pages, navigation labels, and digit-heavy index rows.
+        if any(marker in normalized for marker in (
+            "muc luc", "table of contents", "con so noi bat", "giai thuong tieu bieu",
+            "hoat dong noi bat", "danh muc noi dung",
+        )):
+            continue
+        short_numbers = re.findall(r"(?<!\w)\d{1,2}(?!\w)", normalized)
+        if len(short_numbers) >= 4 or len(clean_sentence) < 60:
+            continue
+        # Skip company-registration rows and other directory metadata.
+        if re.search(r"(?<!\d)\d{10,13}(?!\d)", clean_sentence):
+            continue
+        if not re.search(r"[a-zA-ZÀ-ỹ]{3,}", clean_sentence):
+            continue
+        source_sentences.append((clean_sentence, normalized, page_number))
 
-    # Tim cac cau theo tung chu de
+    used_sentences = []
+    topic_exclusions = {
+        "Tong quan doanh nghiep": (
+            "ghi nhan doanh thu", "doanh thu duoc ghi nhan", "doanh thu cung cap dich vu chi",
+            "co kha nang thu duoc loi ich kinh te",
+        ),
+        "Ket qua kinh doanh": (
+            "loi the thuong mai", "thoai von", "ghi nhan", "ghi giam",
+            "chinh sach ke toan", "nguyen tac ke toan",
+        ),
+        "Tinh hinh tai chinh": (
+            "dieu chinh lai so luong co phieu", "chi tieu ve co cau von",
+            "he so no/tong tai san", "he so no/von chu so huu",
+        ),
+        "Chien luoc va ke hoach": (
+            "thong qua tai dai hoi dong co dong", "ban kiem soat",
+            "nghi quyet hoi dong quan tri", "hdqt xem xet va phe duyet",
+            "thanh vien hdqt doc lap", "uy ban", "tieu ban",
+            "chiu trach nhiem", "giam sat cac van de",
+        ),
+        "Rui ro kinh doanh": ("ket qua noi bat", "highlights",),
+    }
     for topic, keywords in TOPICS.items():
-        normalized_keywords = [
-            normalize_text(keyword)
-            for keyword in keywords
-        ]
+        normalized_keywords = [normalize_text(keyword) for keyword in keywords]
+        exclusions = tuple(normalize_text(term) for term in topic_exclusions.get(topic, ()))
+        candidates = []
+        for original, normalized, page_number in source_sentences:
+            if any(term in normalized for term in exclusions):
+                continue
+            hits = [keyword for keyword in normalized_keywords if keyword in normalized]
+            if not hits:
+                continue
 
-        matches = []
+            # Multiword concepts are more meaningful than generic single words.
+            score = sum(2.0 if " " in keyword else 1.0 for keyword in hits)
+            score += min(2.0, max(0, sum(normalized.count(keyword) for keyword in hits) - len(hits)) * 0.25)
+            if len(hits) == 1 and " " not in hits[0]:
+                continue
+            if re.search(r"\d|%", original):
+                score += 1.0
+            if 100 <= len(original) <= 500:
+                score += 1.0
+            if len(original) > 700:
+                score -= 2.0
 
-        for original_sentence, normalized_sentence in normalized_sentences:
+            # Penalize passages that mostly look like headings or navigation.
+            alpha = [char for char in original if char.isalpha()]
+            uppercase_ratio = sum(char.isupper() for char in alpha) / max(len(alpha), 1)
+            if uppercase_ratio > 0.65:
+                score -= 2.0
+            if score >= 2.0:
+                candidates.append((score, original, normalized, page_number))
+
+        candidates.sort(key=lambda candidate: (candidate[0], min(len(candidate[1]), 360)), reverse=True)
+        selected = []
+        for _, original, normalized, page_number in candidates:
+            words = set(normalized.split())
             if any(
-                keyword in normalized_sentence
-                for keyword in normalized_keywords
+                len(words & prior_words) / max(len(words | prior_words), 1) > 0.65
+                for prior_words in used_sentences
             ):
-                if original_sentence not in matches:
-                    matches.append(original_sentence)
-
-            if len(matches) >= 5:
+                continue
+            selected.append((original, page_number, words))
+            if len(selected) == 1:
                 break
 
-        lines.append(topic.upper())
-        lines.append("-" * 45)
-
-        if matches:
-            for sentence in matches:
-                lines.append("- " + sentence)
+        lines.extend([topic.upper(), "-" * 45])
+        if selected:
+            for original, page_number, words in selected:
+                page_ref = f" (tr. {page_number})" if page_number else ""
+                lines.append("- " + clip_sentence(original, 230) + page_ref)
+                used_sentences.append(words)
         else:
-            lines.append(
-                "Chua tim thay cau phu hop trong van ban trich xuat."
-            )
-
+            lines.append("Chua tim thay doan trich du tin cay cho muc nay.")
         lines.append("")
 
-    # Tim mot so cau co chua chu so de doi chieu
-    numeric_sentences = []
-
-    for sentence in sentences:
-        if re.search(r"\d", sentence) and len(sentence) >= 50:
-            if sentence not in numeric_sentences:
-                numeric_sentences.append(sentence)
-
-        if len(numeric_sentences) >= 10:
-            break
-
-    lines.extend([
-        "CAC CAU CO CHUA SO LIEU DE DOI CHIEU",
-        "-" * 45,
-    ])
-
-    if numeric_sentences:
-        for sentence in numeric_sentences:
-            lines.append("- " + sentence)
-    else:
-        lines.append("Khong tim thay cau co chua so lieu.")
+    if not used_sentences:
+        lines.append("CAN KIEM TRA: khong tim thay doan trich phu hop; xem van ban day du va bao cao goc.")
 
     return "\n".join(lines)
 
@@ -344,10 +435,11 @@ def process_one_pdf(pdf_path):
 
     try:
         # Doc PDF
-        text, page_count = extract_pdf_text(pdf_path)
+        text, page_count, ocr_pages = extract_pdf_text(pdf_path)
 
         result["pages"] = page_count
         result["characters"] = len(text)
+        result["ocr_pages"] = ocr_pages
 
         # Luu van ban day du
         text_path = TEXT_DIR / f"{pdf_path.stem}.txt"
@@ -382,10 +474,12 @@ def process_one_pdf(pdf_path):
         )
 
         # Danh dau cac file can kiem tra
-        if len(text) < MIN_TEXT_LENGTH:
+        if (len(text) < MIN_TEXT_LENGTH
+                or page_count < MIN_ANNUAL_REPORT_PAGES
+                or (page_count and len(text) / page_count < MIN_TEXT_PER_PAGE)):
             result["status"] = "needs_review"
             result["error"] = (
-                "Van ban qua ngan; kiem tra PDF hoac OCR."
+                "PDF quá ngắn/ít chữ so với số trang; kiểm tra file, OCR và đúng năm báo cáo."
             )
 
             print("[CAN KIEM TRA] Van ban trich xuat qua ngan.")
@@ -420,6 +514,7 @@ def save_log(results):
         "status",
         "pages",
         "characters",
+        "ocr_pages",
         "text_file",
         "summary_file",
         "error",

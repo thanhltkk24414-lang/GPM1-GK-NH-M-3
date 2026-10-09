@@ -14,7 +14,11 @@ Chay:
     python core/annual_report.py
 """
 
+import argparse
 import csv
+from datetime import datetime
+import hashlib
+import io
 import re
 import time
 from pathlib import Path
@@ -32,6 +36,11 @@ from ddgs import DDGS
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = PROJECT_DIR / "annual_reports"
 LOG_FILE = OUTPUT_DIR / "annual_report_sources.csv"
+ZENODO_RECORD_ID = "20949551"
+ZENODO_RECORD_URL = f"https://zenodo.org/records/{ZENODO_RECORD_ID}"
+ZENODO_INDEX_URL = f"{ZENODO_RECORD_URL}/files/file_index_full.csv?download=1"
+ZENODO_INDEX_CACHE = OUTPUT_DIR / "zenodo_file_index_full.csv"
+ZENODO_INDEX_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 
 YEARS = [2022, 2023, 2024, 2025]
 
@@ -138,7 +147,7 @@ def build_queries(ticker, year):
     queries = [
         f'"{ticker}" "bao cao thuong nien" {year} filetype:pdf',
         f'"{ticker}" "annual report" {year} PDF',
-        f'"{ticker}" "báo cáo thường niên" năm {year}',
+        f'"{ticker}" BCTN {year}',
     ]
 
     for name in names[:2]:
@@ -510,6 +519,104 @@ def search_pdf_links(ticker, year):
     return []
 
 
+def load_zenodo_catalog():
+    """Load and cache the official file index from the reference dataset."""
+    if ZENODO_INDEX_CACHE.exists():
+        age = time.time() - ZENODO_INDEX_CACHE.stat().st_mtime
+        if age < ZENODO_INDEX_MAX_AGE_SECONDS:
+            try:
+                content = ZENODO_INDEX_CACHE.read_text(encoding="utf-8-sig")
+                return list(csv.DictReader(io.StringIO(content)))
+            except (OSError, csv.Error, UnicodeError):
+                pass
+
+    response = requests.get(ZENODO_INDEX_URL, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+    if not rows or "relative_path" not in rows[0]:
+        raise ValueError("Zenodo catalog response has an unexpected CSV schema")
+
+    temp_path = ZENODO_INDEX_CACHE.with_suffix(".part")
+    temp_path.write_bytes(response.content)
+    temp_path.replace(ZENODO_INDEX_CACHE)
+    return rows
+
+
+def find_zenodo_report(ticker, year):
+    """Find an exact ticker/year BCTN entry from Zenodo's published index."""
+    try:
+        rows = load_zenodo_catalog()
+    except Exception as exc:
+        print(f"  Khong tai duoc catalog Zenodo, se tim web: {exc}")
+        return None
+
+    matches = [
+        row for row in rows
+        if row.get("ticker_folder", "").strip().upper() == ticker.upper()
+        and row.get("year_full", "").strip() == str(year)
+        and row.get("document_type", "").strip().lower() == "annual_report"
+        and row.get("status", "").strip().lower() == "ok"
+        and row.get("relative_path", "").strip()
+        and row.get("archive_period", "").strip()
+        and row.get("sha256", "").strip()
+    ]
+    return matches[0] if matches else None
+
+
+def download_zenodo_report(entry, destination):
+    """Range-download one indexed PDF member; verify its size and SHA-256."""
+    try:
+        from remotezip import RemoteZip
+
+        archive_name = f"vn_bctn_{entry['archive_period']}.zip"
+        archive_url = f"{ZENODO_RECORD_URL}/files/{archive_name}?download=1"
+        print(f"  Tim thay trong catalog Zenodo: {entry['relative_path']}")
+        print("  Tai rieng PDF tu ZIP qua HTTP Range (khong tai ca archive).")
+
+        with RemoteZip(
+            archive_url,
+            headers=HEADERS,
+            timeout=REQUEST_TIMEOUT,
+            initial_buffer_size=1024 * 1024,
+        ) as archive:
+            # The catalog stores paths as TICKER/file.pdf, while the ZIPs
+            # currently place files under full_data/TICKER/file.pdf.
+            catalog_path = entry["relative_path"].lstrip("/")
+            candidates = (catalog_path, f"full_data/{catalog_path}")
+            member_path = None
+            for path in candidates:
+                try:
+                    archive.getinfo(path)
+                    member_path = path
+                    break
+                except KeyError:
+                    continue
+            if member_path is None:
+                raise KeyError(
+                    f"Catalog path {catalog_path!r} not found in archive; "
+                    f"tried {', '.join(repr(path) for path in candidates)}"
+                )
+            pdf_bytes = archive.read(member_path)
+
+        expected_size = int(entry["file_size_bytes"])
+        if not pdf_bytes.startswith(b"%PDF-"):
+            raise ValueError("Zenodo archive member is not a valid PDF")
+        if len(pdf_bytes) != expected_size:
+            raise ValueError(f"Size mismatch: expected {expected_size}, got {len(pdf_bytes)}")
+        actual_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
+        if actual_sha256.lower() != entry["sha256"].strip().lower():
+            raise ValueError("SHA-256 mismatch against Zenodo catalog")
+
+        temp_path = destination.with_suffix(".part")
+        temp_path.write_bytes(pdf_bytes)
+        temp_path.replace(destination)
+        print(f"  Tai va xac minh SHA-256 thanh cong: {destination.name}")
+        return True
+    except Exception as exc:
+        print(f"  Khong lay duoc file tu Zenodo: {exc}")
+        return False
+
+
 # ============================================================
 # 6. TAI VA KIEM TRA PDF
 # ============================================================
@@ -589,36 +696,33 @@ def download_pdf(url, destination):
 # ============================================================
 
 def write_log(ticker, year, status, url="", note=""):
-    """Ghi tung ket qua xu ly vao CSV."""
-    file_exists = LOG_FILE.exists()
-
+    """Ghi 1 dong moi theo schema nhat quan va chuan hoa file log cu."""
+    fields = ["ticker", "year", "url", "title", "domain", "file", "status", "note", "checked_at"]
+    rows = []
+    if LOG_FILE.exists():
+        try:
+            with LOG_FILE.open("r", newline="", encoding="utf-8-sig") as source:
+                rows = list(csv.DictReader(source))
+        except (OSError, csv.Error):
+            rows = []
+    valid_statuses = {"downloaded_zenodo_pdf", "downloaded_pdf", "downloaded_check_content", "exists_verified", "exists_pdf", "not_found", "download_failed", "error"}
+    rows = [
+        row for row in rows
+        if row.get("status") in valid_statuses
+        and (row.get("ticker", "").upper(), str(row.get("year", ""))) != (ticker, str(year))
+    ]
+    rows.append({
+        "ticker": ticker, "year": year, "url": url,
+        "title": "", "domain": urlparse(url).netloc if url else "",
+        "file": f"{ticker}_{year}.pdf" if status in {"downloaded_zenodo_pdf", "downloaded_pdf", "exists_verified", "exists_pdf"} else "",
+        "status": status, "note": note,
+        "checked_at": datetime.now().isoformat(timespec="seconds"),
+    })
     try:
-        with open(
-            LOG_FILE,
-            "a",
-            newline="",
-            encoding="utf-8-sig",
-        ) as file:
-
-            writer = csv.writer(file)
-
-            if not file_exists:
-                writer.writerow([
-                    "ticker",
-                    "year",
-                    "status",
-                    "url",
-                    "note",
-                ])
-
-            writer.writerow([
-                ticker,
-                year,
-                status,
-                url,
-                note,
-            ])
-
+        with LOG_FILE.open("w", newline="", encoding="utf-8-sig") as target:
+            writer = csv.DictWriter(target, fieldnames=fields, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
     except OSError as exc:
         print(f"  Khong ghi duoc log CSV: {exc}")
 
@@ -627,12 +731,14 @@ def write_log(ticker, year, status, url="", note=""):
 # 8. XU LY MOT MA CO PHIEU VA MOT NAM
 # ============================================================
 
-def process_report(ticker, year):
+def process_report(ticker, year, allow_web_fallback=True):
     ticker = ticker.strip().upper()
     destination = OUTPUT_DIR / f"{ticker}_{year}.pdf"
 
     print("\n" + "-" * 60)
     print(f"DANG XU LY: {ticker} - {year}")
+    catalog_entry = find_zenodo_report(ticker, year)
+    zenodo_attempted = False
 
     # Khong tai lai file da ton tai neu co dung chu ky PDF.
     if destination.exists():
@@ -641,14 +747,24 @@ def process_report(ticker, year):
                 signature = file.read(5)
 
             if signature == b"%PDF-":
-                print(f"  Da co file PDF: {destination.name}")
-                write_log(
-                    ticker,
-                    year,
-                    "exists_pdf",
-                    note="File PDF da ton tai; chua xac minh noi dung bao cao.",
-                )
-                return True
+                if catalog_entry:
+                    existing_sha256 = hashlib.sha256(destination.read_bytes()).hexdigest()
+                    if existing_sha256.lower() == catalog_entry["sha256"].strip().lower():
+                        print(f"  Da co PDF va SHA-256 khop catalog: {destination.name}")
+                        write_log(ticker, year, "exists_verified", note="PDF khớp SHA-256 trong catalog Zenodo.")
+                        return True
+                    print("  PDF cu khong khop catalog; thu lay ban chuan tu Zenodo.")
+                    zenodo_attempted = True
+                    if download_zenodo_report(catalog_entry, destination):
+                        archive_url = f"{ZENODO_RECORD_URL}/files/vn_bctn_{catalog_entry['archive_period']}.zip?download=1"
+                        write_log(ticker, year, "downloaded_zenodo_pdf", url=archive_url,
+                                  note=f"Da xac minh SHA-256: {catalog_entry['sha256']}")
+                        return True
+                else:
+                    print(f"  Da co file PDF: {destination.name}")
+                    write_log(ticker, year, "exists_pdf",
+                              note="File PDF da ton tai; khong co ban ghi trong catalog de xac minh hash.")
+                    return True
 
         except OSError:
             pass
@@ -660,6 +776,18 @@ def process_report(ticker, year):
         except OSError:
             pass
 
+    if catalog_entry and not zenodo_attempted and download_zenodo_report(catalog_entry, destination):
+        archive_url = f"{ZENODO_RECORD_URL}/files/vn_bctn_{catalog_entry['archive_period']}.zip?download=1"
+        write_log(ticker, year, "downloaded_zenodo_pdf", url=archive_url,
+                  note=f"Da xac minh SHA-256: {catalog_entry['sha256']}")
+        return True
+
+    if not allow_web_fallback:
+        write_log(ticker, year, "download_failed",
+                  note="Khong lay duoc PDF tu Zenodo; bo qua tim web theo yeu cau.")
+        return False
+
+    print("  Catalog khong co file/phuong phap Range gap loi; chuyen sang DDGS/Bing.")
     urls = search_pdf_links(ticker, year)
 
     if not urls:
@@ -672,7 +800,9 @@ def process_report(ticker, year):
         return False
 
     # Thu tung link cho den khi tai duoc mot PDF hop le.
+    tried = set()
     for index, url in enumerate(urls, start=1):
+        tried.add(url)
         print(f"  Thu link {index}/{len(urls)}: {url}")
 
         if download_pdf(url, destination):
@@ -689,6 +819,18 @@ def process_report(ticker, year):
             return True
 
         time.sleep(0.5)
+
+    # DDGS đôi khi trả kết quả nhưng toàn bộ link chết/không phải PDF.
+    # Vẫn thử Bing trước khi kết luận tải thất bại.
+    fallback_urls = [url for url in search_with_bing(ticker, year) if url not in tried]
+    for index, url in enumerate(fallback_urls, start=1):
+        print(f"  Thu link Bing du phong {index}/{len(fallback_urls)}: {url}")
+        if download_pdf(url, destination):
+            write_log(
+                ticker, year, "downloaded_pdf", url=url,
+                note="Da tai sau khi thu Bing; can xac minh dung cong ty va nam.",
+            )
+            return True
 
     write_log(
         ticker,
@@ -734,28 +876,46 @@ def get_tickers():
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Tai BCTN theo ma va nam.")
+    parser.add_argument("--ticker", help="Ma co phieu, vi du FPT")
+    parser.add_argument("--year", type=int, help="Nam bao cao, vi du 2023")
+    parser.add_argument(
+        "--zenodo-only", action="store_true",
+        help="Chi tai tu catalog Zenodo, khong chay tim kiem DDGS/Bing neu loi.",
+    )
+    args = parser.parse_args()
+
     print("=" * 60)
     print("CONG CU THU THAP BAO CAO THUONG NIEN")
     print("=" * 60)
     print(f"Thu muc luu PDF: {OUTPUT_DIR}")
     print(f"File log: {LOG_FILE}")
-    print(f"Cac nam xu ly: {', '.join(map(str, YEARS))}")
+    years = [args.year] if args.year else YEARS
+    if any(year < 2000 or year > 2100 for year in years):
+        parser.error("Nam khong hop le.")
+    print(f"Cac nam xu ly: {', '.join(map(str, years))}")
 
-    tickers = get_tickers()
+    if args.ticker:
+        tickers = [item.strip().upper() for item in args.ticker.split(",") if item.strip()]
+        invalid = [ticker for ticker in tickers if not re.fullmatch(r"[A-Z0-9]{2,10}", ticker)]
+        if not tickers or invalid:
+            parser.error("Ma co phieu khong hop le.")
+    else:
+        tickers = get_tickers()
 
-    total = len(tickers) * len(YEARS)
+    total = len(tickers) * len(years)
     completed = 0
     successful = 0
     failed = 0
 
     for ticker in tickers:
-        for year in YEARS:
+        for year in years:
             completed += 1
 
             print(f"\nTIEN DO: {completed}/{total}")
 
             try:
-                success = process_report(ticker, year)
+                success = process_report(ticker, year, allow_web_fallback=not args.zenodo_only)
 
                 if success:
                     successful += 1
