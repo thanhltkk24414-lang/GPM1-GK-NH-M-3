@@ -1,8 +1,18 @@
+# Install VNStock and vnai from the official VNStock package index.
+--extra-index-url https://vnstocks.com/api/simple
 streamlit
 pandas
 reportlab
 jinja2
 pdfkit
-requests
 weasyprint
 openpyxl
+requests
+beautifulsoup4
+ddgs
+pymupdf
+pillow
+pytesseract
+remotezip
+vnstock
+vnai
