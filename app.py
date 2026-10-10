@@ -220,7 +220,7 @@ st.markdown("""
     }
 
     [data-testid="stMetric"] {
-        overflow: visible !important;
+        overflow: hidden !important;
     }
     [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] div,
     [data-testid="stMetricValue"] {
