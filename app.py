@@ -106,7 +106,7 @@ st.markdown("""
 
     /* Metric Text Styling */
     [data-testid="stMetricValue"] {
-        color: #FFFFFF !important;
+        color: var(--text-color) !important;
         font-size: 28px !important;
         font-weight: 800 !important;
         text-shadow: 0 1px 2px rgba(0,0,0,0.1);
@@ -152,7 +152,7 @@ st.markdown("""
         text-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
     .sub-title {
-        color: #FFFFFF;
+        color: var(--text-color);
         opacity: 0.8;
         font-size: 16px;
         margin-bottom: 25px;
@@ -171,7 +171,7 @@ st.markdown("""
     
     .footer-text {
         font-size: 14px;
-        color: #FFFFFF;
+        color: var(--text-color);
         opacity: 0.6;
         margin-top: 50px;
         border-top: 1px solid rgba(138, 43, 226, 0.3);
@@ -180,7 +180,7 @@ st.markdown("""
     }
     
     .stMarkdown p, .stMarkdown li {
-        color: #FFFFFF;
+        color: var(--text-color);
         font-size: 16px;
         line-height: 1.6;
     }
@@ -188,7 +188,7 @@ st.markdown("""
     .custom-table {
         width: 100%;
         border-collapse: collapse;
-        color: #FFFFFF;
+        color: var(--text-color);
         font-size: 15px;
     }
     .custom-table th {
@@ -508,7 +508,6 @@ if st.session_state.get("report_ticker"):
                     max_date = df_stock['date'].max() + pd.Timedelta(days=10)
 
                     fig.update_layout(
-                        template="plotly_dark",
                         margin=dict(l=20, r=20, t=20, b=20),
                         paper_bgcolor="rgba(0,0,0,0)",
                         plot_bgcolor="rgba(0,0,0,0)",
@@ -768,7 +767,7 @@ if st.session_state.get("report_ticker"):
                                 font=dict(color="#718294", size=11),
                             )
                         financial_fig.update_layout(
-                            template="plotly_dark",
+
                             height=380,
                             margin=dict(l=30, r=30, t=50, b=30),
                             title=dict(text=label, font=dict(size=14, color="#e2e8f0")),
@@ -868,19 +867,19 @@ else:
     # Màn hình chào mừng khi chưa nhập mã
     st.markdown(f"""
     <div class="welcome-box" style="margin-top: 50px; text-align: center; padding: 50px 20px !important;">
-        <p style="color: #FFFFFF; font-size: 26px; max-width: 1100px; margin: 0 auto 30px auto; line-height: 1.8; font-weight: 700;">
+        <p style="color: var(--text-color); font-size: 26px; max-width: 1100px; margin: 0 auto 30px auto; line-height: 1.8; font-weight: 700;">
             {hoverify('Dựa trên các nguồn dữ liệu:')}
         </p>
-        <ul style="color: #FFFFFF; font-size: 36px; max-width: 1100px; margin: 0 auto 40px auto; padding-left: 0; line-height: 2.2; list-style-type: none; text-align: left; display: inline-block; font-weight: 800;">
+        <ul style="color: var(--text-color); font-size: 36px; max-width: 1100px; margin: 0 auto 40px auto; padding-left: 0; line-height: 2.2; list-style-type: none; text-align: left; display: inline-block; font-weight: 800;">
             <li>• {hoverify('Giá và dữ liệu giao dịch chứng khoán')}</li>
             <li>• {hoverify('Báo cáo tài chính và các chỉ số tài chính doanh nghiệp niêm yết')}</li>
             <li>• {hoverify('Thông tin, tin tức doanh nghiệp cập nhật')}</li>
             <li>• {hoverify('Báo cáo phân tích của các công ty chứng khoán')}</li>
         </ul>
-        <p style="color: #FFFFFF; font-size: 24px; max-width: 1100px; margin: 0 auto 20px auto; line-height: 1.8; font-weight: 500;">
+        <p style="color: var(--text-color); font-size: 24px; max-width: 1100px; margin: 0 auto 20px auto; line-height: 1.8; font-weight: 500;">
             {hoverify('Báo cáo phân tích tự động trích xuất ra PDF theo nhu cầu người dùng')}
         </p>
-        <p style="color: #FFFFFF; font-size: 28px; max-width: 1100px; margin: 0 auto; line-height: 1.8; font-weight: 800;">
+        <p style="color: var(--text-color); font-size: 28px; max-width: 1100px; margin: 0 auto; line-height: 1.8; font-weight: 800;">
             {hoverify('Chính xác về mặt dữ liệu, kết quả phân tích đánh giá thích hợp và sáng tạo')}
         </p>
     </div>
