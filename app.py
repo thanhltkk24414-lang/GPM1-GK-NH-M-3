@@ -10,21 +10,6 @@ from core.report_pdf import (
     refresh_stock_report_quote,
 )
 
-# Tự động giải nén data.zip nếu chưa có database
-import zipfile
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parent
-DB_PATH = PROJECT_ROOT / "data" / "market_data.db"
-ZIP_PATH = PROJECT_ROOT / "data.zip"
-
-if not DB_PATH.exists() and ZIP_PATH.exists():
-    try:
-        with zipfile.ZipFile(ZIP_PATH, 'r') as zip_ref:
-            zip_ref.extractall(PROJECT_ROOT)
-    except Exception as e:
-        pass
-
 # Cấu hình trang với giao diện rộng
 st.set_page_config(page_title="Hệ Thống Phân Tích Cổ Phiếu", layout="wide", initial_sidebar_state="collapsed")
 
