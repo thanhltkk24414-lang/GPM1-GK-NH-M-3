@@ -1,8 +1,12 @@
 
+import sys
 import sqlite3
 import pandas as pd
 import numpy as np
 
+# Fix UnicodeEncodeError on Windows console
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding="utf-8")
 
 # =========================================================
 # CẤU HÌNH
@@ -135,8 +139,9 @@ def calculate_indicators():
 
         # Tính chỉ báo riêng biệt cho từng mã
         result = (
-            df.groupby("symbol", group_keys=False)
+            df.groupby("symbol")
             .apply(calculate_one_stock)
+            .reset_index(level=0)
             .reset_index(drop=True)
         )
 

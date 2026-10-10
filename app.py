@@ -104,6 +104,31 @@ st.markdown("""
         border: 1px solid rgba(138, 43, 226, 0.6) !important;
     }
 
+    /* Hiệu ứng riêng cho DataFrame và Expander (không padding đè để tránh vỡ layout) */
+    [data-testid="stExpander"], [data-testid="stDataFrame"] {
+        background-color: var(--secondary-background-color) !important;
+        background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0%, rgba(0, 0, 0, 0.05) 100%) !important;
+        backdrop-filter: blur(10px) !important;
+        -webkit-backdrop-filter: blur(10px) !important;
+        border-radius: 12px !important;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.15) !important;
+        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+        border: 1px solid rgba(138, 43, 226, 0.3) !important;
+        margin-bottom: 15px;
+    }
+    
+    [data-testid="stExpander"] *, [data-testid="stDataFrame"] * {
+        font-weight: bold !important;
+        font-style: italic !important;
+    }
+    
+    [data-testid="stExpander"]:hover, [data-testid="stDataFrame"]:hover {
+        transform: translateY(-4px) scale(1.01) !important;
+        box-shadow: 0 15px 30px rgba(138, 43, 226, 0.2) !important;
+        border-color: rgba(138, 43, 226, 0.6) !important;
+        z-index: 10;
+    }
+
     /* Metric Text Styling */
     [data-testid="stMetricValue"] {
         color: var(--text-color) !important;
@@ -119,7 +144,11 @@ st.markdown("""
     }
 
     /* In vàng các thẻ <b> (tiêu đề nhỏ) trong hộp tóm tắt và phụ đề */
-    .summary-box b, .sub-title b, .stMarkdown strong, .stMarkdown b {
+    .summary-box, .summary-box * {
+        font-weight: bold !important;
+        font-style: italic !important;
+    }
+    .summary-box b, .sub-title b, .stMarkdown strong, .stMarkdown b, .summary-box th {
         color: #d69e2e !important;
     }
 
@@ -142,6 +171,16 @@ st.markdown("""
     }
 
     /* Typography */
+    /* Tăng cỡ chữ cho các đoạn văn, caption và bảng để dễ nhìn hơn */
+    [data-testid="stCaptionContainer"], 
+    [data-testid="stText"],
+    .stMarkdown p, 
+    .stMarkdown li, 
+    [data-testid="stDataFrame"] td, 
+    [data-testid="stDataFrame"] th,
+    .stDataFrame {
+        font-size: 16px !important;
+    }
     .main-title {
         font-family: 'Segoe UI', Tahoma, sans-serif;
         color: #d69e2e !important;
@@ -312,7 +351,21 @@ if st.session_state.get("report_ticker"):
     with st.spinner(f"Hệ thống đang xử lý dữ liệu cho {ticker}..."):
         try:
             if analyze_btn or "report_data" not in st.session_state:
+                # 1. Tải dữ liệu báo cáo trước để biết năm tài chính mới nhất
                 report_data = load_stock_report_data(ticker)
+                
+                # 2. Lấy năm tài chính mới nhất từ báo cáo
+                fin_years = report_data.get("financial_years", [])
+                target_year = fin_years[-1] if fin_years else 2023
+                
+                # 3. Tải BCTN cho năm mục tiêu đó
+                import core.annual_report as ar
+                if not (ar.OUTPUT_DIR / f"{ticker}_{target_year}.pdf").exists():
+                    try:
+                        ar.process_report(ticker, target_year)
+                    except Exception:
+                        pass
+                
                 st.session_state["report_data"] = report_data
             else:
                 report_data = st.session_state["report_data"]
@@ -347,8 +400,8 @@ if st.session_state.get("report_ticker"):
             with open(pdf_path, "rb") as f:
                 pdf_bytes = f.read()
 
-            col_empty1, col_dl, col_empty2 = st.columns([1, 1, 1])
-            with col_dl:
+            col_dl1, col_dl2 = st.columns(2)
+            with col_dl1:
                 st.download_button(
                     label="📥 TẢI XUỐNG BÁO CÁO PHÂN TÍCH (PDF)",
                     data=pdf_bytes,
@@ -358,8 +411,32 @@ if st.session_state.get("report_ticker"):
                     use_container_width=True
                 )
             
+            bctn_path = None
+            bctn_year = report_data.get("financial_years", [])[-1] if report_data.get("financial_years") else 2023
+            
+            import core.annual_report as ar
+            file_path = ar.OUTPUT_DIR / f"{ticker}_{bctn_year}.pdf"
+            if file_path.exists():
+                bctn_path = file_path
+                    
+            with col_dl2:
+                if bctn_path:
+                    try:
+                        with open(bctn_path, "rb") as f:
+                            bctn_bytes = f.read()
+                        st.download_button(
+                            label=f"📥 TẢI BÁO CÁO THƯỜNG NIÊN ({bctn_year})",
+                            data=bctn_bytes,
+                            file_name=f"BCTN_{ticker}_{bctn_year}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+                    except Exception:
+                        st.button("Lỗi Đọc Báo Cáo Thường Niên", disabled=True, use_container_width=True)
+                else:
+                    st.button("Không Tìm Thấy Báo Cáo Thường Niên", disabled=True, use_container_width=True)
+            
             st.markdown("<hr style='border: 1px solid rgba(138, 43, 226, 0.2); margin-top: 10px; margin-bottom: 20px;'>", unsafe_allow_html=True)
-
             # --- 1. TỔNG QUAN GIAO DỊCH & ĐỊNH GIÁ ---
             st.markdown(f'<div class="section-header">💎 {hoverify("1. Chỉ Số Giao Dịch & Khuyến Nghị")}</div>', unsafe_allow_html=True)
             
@@ -508,7 +585,7 @@ if st.session_state.get("report_ticker"):
                     max_date = df_stock['date'].max() + pd.Timedelta(days=10)
 
                     fig.update_layout(
-                        margin=dict(l=20, r=20, t=20, b=20),
+                        margin=dict(l=20, r=20, t=20, b=60),
                         paper_bgcolor="rgba(0,0,0,0)",
                         plot_bgcolor="rgba(0,0,0,0)",
                         xaxis_rangeslider_visible=False,
@@ -598,48 +675,31 @@ if st.session_state.get("report_ticker"):
                         st.caption(valuation_summary)
                     valuation_methods = report_data.get("valuation_methods", [])
                     if valuation_methods:
-                        valuation_rows = [
-                            {
-                                "Phương pháp": method["method_name"],
-                                "Giá trị hợp lý (đồng/CP)": method["fair_value"],
-                                "Tỷ trọng": method["weight"],
-                            }
-                            for method in valuation_methods
-                        ]
-                        valuation_rows.append(
-                            {
-                                "Phương pháp": "Giá mục tiêu tổng hợp",
-                                "Giá trị hợp lý (đồng/CP)": report_data.get(
-                                    "target_price", "Chưa đủ dữ liệu"
-                                ),
-                                "Tỷ trọng": "—",
-                            }
-                        )
-                        st.dataframe(
-                            valuation_rows,
-                            hide_index=True,
-                            use_container_width=True,
-                        )
+                        html_table = "<div class='summary-box'><table style='width:100%; border-collapse: collapse; font-size: 16px;'>"
+                        html_table += "<tr><th style='text-align:left; border-bottom: 1px solid rgba(138,43,226,0.3); padding: 8px;'>Phương pháp</th><th style='text-align:left; border-bottom: 1px solid rgba(138,43,226,0.3); padding: 8px;'>Giá trị hợp lý (đồng/CP)</th><th style='text-align:left; border-bottom: 1px solid rgba(138,43,226,0.3); padding: 8px;'>Tỷ trọng</th></tr>"
+                        for method in valuation_methods:
+                            html_table += f"<tr><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>{method['method_name']}</td><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>{method['fair_value']}</td><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>{method['weight']}</td></tr>"
+                        target_price = report_data.get("target_price", "Chưa đủ dữ liệu")
+                        html_table += f"<tr><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>Giá mục tiêu tổng hợp</td><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>{target_price}</td><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>—</td></tr>"
+                        html_table += "</table></div>"
+                        st.markdown(html_table, unsafe_allow_html=True)
                     group_labels = {
                         "technical": "Kỹ thuật",
                         "fundamental": "Cơ bản",
                         "news": "Tin tức",
                     }
-                    group_rows = [
-                        {
-                            "Nhóm": group_labels.get(group["name"], group["name"]),
-                            "Điểm": group["score"],
-                            "Trọng số ban đầu": f"{group['weight']:.0%}",
-                            "Đóng góp sau chuẩn hóa": f"{group['weighted_points']:.1f}",
-                        }
-                        for group in score_breakdown.get("groups", [])
-                    ]
-                    if group_rows:
-                        st.dataframe(
-                            pd.DataFrame(group_rows),
-                            hide_index=True,
-                            use_container_width=True,
-                        )
+                    groups = score_breakdown.get("groups", [])
+                    if groups:
+                        html_table = "<div class='summary-box'><table style='width:100%; border-collapse: collapse; font-size: 16px;'>"
+                        html_table += "<tr><th style='text-align:left; border-bottom: 1px solid rgba(138,43,226,0.3); padding: 8px;'>Nhóm</th><th style='text-align:left; border-bottom: 1px solid rgba(138,43,226,0.3); padding: 8px;'>Điểm</th><th style='text-align:left; border-bottom: 1px solid rgba(138,43,226,0.3); padding: 8px;'>Trọng số ban đầu</th><th style='text-align:left; border-bottom: 1px solid rgba(138,43,226,0.3); padding: 8px;'>Đóng góp sau chuẩn hóa</th></tr>"
+                        for group in groups:
+                            nhom = group_labels.get(group['name'], group['name'])
+                            diem = group['score']
+                            trong_so = f"{group['weight']:.0%}"
+                            dong_gop = f"{group['weighted_points']:.1f}"
+                            html_table += f"<tr><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>{nhom}</td><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>{diem}</td><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>{trong_so}</td><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>{dong_gop}</td></tr>"
+                        html_table += "</table></div>"
+                        st.markdown(html_table, unsafe_allow_html=True)
                     bonus = score_breakdown.get("bonus", 0)
                     st.caption(
                         f"Tổng điểm: {score_breakdown.get('total_score')}/100 · "
@@ -658,23 +718,16 @@ if st.session_state.get("report_ticker"):
                         factors = score_breakdown.get(key, [])
                         if factors:
                             st.markdown(f"**{title}**")
-                            st.dataframe(
-                                [
-                                    {
-                                        "Tiêu chí": factor["label"],
-                                        "Dữ liệu": factor.get("evidence", ""),
-                                        "Quy tắc": factor.get("rule", ""),
-                                        "Tác động": (
-                                            f"{factor['points']:+d} điểm"
-                                            if factor.get("points") is not None
-                                            else "Không chấm"
-                                        ),
-                                    }
-                                    for factor in factors
-                                ],
-                                hide_index=True,
-                                use_container_width=True,
-                            )
+                            html_table = "<div class='summary-box'><table style='width:100%; border-collapse: collapse; font-size: 16px;'>"
+                            html_table += "<tr><th style='text-align:left; border-bottom: 1px solid rgba(138,43,226,0.3); padding: 8px;'>Tiêu chí</th><th style='text-align:left; border-bottom: 1px solid rgba(138,43,226,0.3); padding: 8px;'>Dữ liệu</th><th style='text-align:left; border-bottom: 1px solid rgba(138,43,226,0.3); padding: 8px;'>Quy tắc</th><th style='text-align:left; border-bottom: 1px solid rgba(138,43,226,0.3); padding: 8px;'>Tác động</th></tr>"
+                            for factor in factors:
+                                t_chi = factor['label']
+                                d_lieu = factor.get('evidence', '')
+                                q_tac = factor.get('rule', '')
+                                t_dong = f"{factor['points']:+d} điểm" if factor.get("points") is not None else "Không chấm"
+                                html_table += f"<tr><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>{t_chi}</td><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>{d_lieu}</td><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>{q_tac}</td><td style='border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px;'>{t_dong}</td></tr>"
+                            html_table += "</table></div>"
+                            st.markdown(html_table, unsafe_allow_html=True)
 
             col_points, col_risks = st.columns(2)
             with col_points:
@@ -712,7 +765,7 @@ if st.session_state.get("report_ticker"):
                 chart_data = report_data.get("financial_chart_data", {})
                 chart_years = chart_data.get("years", [])
                 chart_choices = {
-                    "LNST": ("net_profit", "net_profit_yoy", chart_data.get("profit_label", "Lợi nhuận sau thuế")),
+                    "Lợi Nhuận Sau Thuế": ("net_profit", "net_profit_yoy", chart_data.get("profit_label", "Lợi nhuận sau thuế")),
                     chart_data.get("income_label", "Doanh thu thuần"): ("income", "income_yoy", chart_data.get("income_label", "Doanh thu thuần")),
                 }
                 available_charts = [
@@ -758,14 +811,7 @@ if st.session_state.get("report_ticker"):
                             hovertemplate="YoY: %{y:+.1f}%<extra></extra>",
                         )
                         if chart_years and yoy_series[0] is None:
-                            financial_fig.add_annotation(
-                                x=display_years[0],
-                                y=-yoy_bound * 0.82,
-                                yref="y2",
-                                text="N/A*",
-                                showarrow=False,
-                                font=dict(color="#718294", size=11),
-                            )
+                            pass
                         financial_fig.update_layout(
 
                             height=380,
@@ -835,16 +881,19 @@ if st.session_state.get("report_ticker"):
             news_list = report_data.get("news_list", [])
             if news_list:
                 for news in news_list:
+                    news_html = '<div class="summary-box">'
+                    
                     if news.get("url"):
-                        st.link_button(news["title"], news["url"])
+                        news_html += f'<a href="{news["url"]}" target="_blank" style="color: #d69e2e; font-weight: bold; text-decoration: none; font-size: 18px;">{news["title"]}</a><br>'
                     else:
-                        st.markdown(f"**{news['title']}**")
-                    if news.get("date") or news.get("source"):
-                        st.caption(" · ".join(
-                            value for value in (news.get("date"), news.get("source")) if value
-                        ))
-                    if news.get("summary"):
-                        st.write(news["summary"])
+                        news_html += f'<b style="color: #d69e2e; font-size: 18px;">{news["title"]}</b><br>'
+                        
+                    meta = " · ".join(value for value in (news.get("date"), news.get("source")) if value)
+                    if meta:
+                        news_html += f'<span style="font-size: 14px; opacity: 0.8; color: var(--text-color);">{meta}</span><br>'
+                        
+                    news_html += '</div>'
+                    st.markdown(news_html, unsafe_allow_html=True)
             elif report_data.get("news_error"):
                 st.warning(f"Không lấy được tin tức: {report_data['news_error']}")
             else:

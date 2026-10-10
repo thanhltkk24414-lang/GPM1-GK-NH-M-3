@@ -64,7 +64,65 @@ def load_price_history(ticker, database_path=None):
         )
 
     if history.empty:
+        # Nếu chưa có lịch sử, tự động tải
+        try:
+            import sys
+            import io
+            # Tránh in ra màn hình quá nhiều làm phiền giao diện web
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            
+            from stock_bot.data_pipeline.update_history import HistoricalUpdater
+            updater = HistoricalUpdater(db_path=str(database_path))
+            target_date = updater.get_last_completed_trading_date()
+            if target_date is None:
+                target_date = updater.now_vietnam().date()
+            updater.update_symbol(ticker, target_date)
+            updater.close()
+            
+            try:
+                import sys
+                import os
+                if str(PROJECT_ROOT) not in sys.path:
+                    sys.path.insert(0, str(PROJECT_ROOT))
+                import calculate_indicators
+                calculate_indicators.calculate_indicators()
+            except Exception as calc_e:
+                pass
+                
+            sys.stdout = old_stdout
+            
+            # Thử load lại
+            with closing(sqlite3.connect(database_path)) as connection:
+                history = pd.read_sql_query(
+                    history_query, connection, params=(ticker.upper(),)
+                )
+                indicators = pd.read_sql_query(
+                    indicators_query, connection, params=(ticker.upper(),)
+                )
+        except Exception as e:
+            if 'old_stdout' in locals():
+                sys.stdout = old_stdout
+            raise ValueError(f"Không tìm thấy dữ liệu lịch sử cho mã {ticker} và tải tự động thất bại: {e}")
+            
+    if history.empty:
         raise ValueError(f"Không tìm thấy dữ liệu lịch sử cho mã {ticker}.")
+        
+    if indicators.empty:
+        try:
+            import sys
+            import os
+            if str(PROJECT_ROOT) not in sys.path:
+                sys.path.insert(0, str(PROJECT_ROOT))
+            import calculate_indicators
+            calculate_indicators.calculate_indicators()
+            with closing(sqlite3.connect(database_path)) as connection:
+                indicators = pd.read_sql_query(
+                    indicators_query, connection, params=(ticker.upper(),)
+                )
+        except Exception as e:
+            pass
+
     if not indicators.empty:
         history = history.merge(
             indicators, on=["symbol", "date"], how="left", validate="one_to_one"
