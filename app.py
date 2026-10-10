@@ -735,9 +735,8 @@ if st.session_state.get("report_ticker"):
                                 f"{amounts[year]:,.1f}" if amounts.get(year) is not None else ""
                                 for year in chart_years
                             ],
-                            textposition="inside",
-                            insidetextanchor="end",
-                            textfont=dict(color="white"),
+                            textposition="outside",
+                            textfont=dict(color="#e2e8f0"),
                             marker=dict(
                                 color="rgba(59, 130, 246, 0.85)",
                                 line=dict(color="#2563eb", width=1.5)
@@ -758,7 +757,7 @@ if st.session_state.get("report_ticker"):
                                 f"{value:+.1f}%" if value is not None else ""
                                 for value in yoy_series
                             ],
-                            textposition="top center",
+                            textposition="bottom right",
                             textfont=dict(color="#fcd34d", size=13),
                             connectgaps=False,
                             yaxis="y2",
@@ -782,7 +781,6 @@ if st.session_state.get("report_ticker"):
                             title=dict(text=label, font=dict(size=14, color="#e2e8f0")),
                             paper_bgcolor="rgba(0,0,0,0)",
                             plot_bgcolor="rgba(0,0,0,0)",
-                            hovermode="x unified",
                             xaxis=dict(type="category", showgrid=False, title=""),
                             yaxis=dict(title="Tỷ đồng", showgrid=True, gridcolor="rgba(255,255,255,0.1)"),
                             yaxis2=dict(
