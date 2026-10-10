@@ -416,7 +416,6 @@ if st.session_state.get("report_ticker"):
                 f"{pe_value:.2f} lần" if pe_value is not None else "Chưa có dữ liệu",
                 help="P/E được đọc từ chỉ tiêu pe_ratio trong bảng ratio của VNStock.",
             )
-            st.caption(f"Nguồn giá: {report_data.get('price_source', 'Chưa có dữ liệu')}")
             eps_value = report_data.get("fundamental_metrics", {}).get("eps")
             eps_column, _ = st.columns([1, 3])
             eps_column.metric(
@@ -427,6 +426,7 @@ if st.session_state.get("report_ticker"):
                     "mỗi cổ phiếu, không phải nghìn đồng."
                 ),
             )
+            st.caption(f"Nguồn giá: {report_data.get('price_source', 'Chưa có dữ liệu')}")
             missing_metadata = report_data.get("metadata_missing", [])
             if report_data.get("company_metadata_error"):
                 st.warning(report_data["company_metadata_error"])
