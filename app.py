@@ -1,11 +1,68 @@
+import html
+import os
+
 import streamlit as st
 import pandas as pd
-import os
 import plotly.graph_objects as go
-from core.report_pdf import load_stock_report_data, generate_pdf
+from core.report_pdf import (
+    generate_pdf,
+    load_stock_report_data,
+    refresh_stock_report_quote,
+)
 
 # Cấu hình trang với giao diện rộng
 st.set_page_config(page_title="Hệ Thống Phân Tích Cổ Phiếu", layout="wide", initial_sidebar_state="collapsed")
+
+
+@st.fragment(run_every="120s")
+def _refresh_report_quote(ticker):
+    report_data = st.session_state.get("report_data")
+    if not isinstance(report_data, dict) or report_data.get("ticker") != ticker:
+        return
+
+    try:
+        refreshed = refresh_stock_report_quote(report_data)
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        st.warning(f"Không thể cập nhật giá hiện tại: {exc}")
+        return
+
+    changed = any(
+        refreshed.get(key) != report_data.get(key)
+        for key in (
+            "current_price",
+            "data_as_of",
+            "recommendation",
+            "target_price",
+            "upside",
+            "price_source",
+            "exchange",
+            "industry",
+            "market_cap",
+            "shares_outstanding",
+            "foreign_ownership",
+            "company_metadata_as_of",
+        )
+    )
+    st.session_state["report_data"] = refreshed
+    if changed:
+        st.rerun(scope="app")
+
+    if refreshed.get("quote_error"):
+        st.warning(
+            f"{refreshed['quote_error']} "
+            "Đang hiển thị giá đóng cửa gần nhất."
+        )
+    else:
+        if refreshed.get("quote_is_realtime"):
+            st.caption(
+                f"Giá realtime và khuyến nghị tự làm mới mỗi 2 phút · "
+                f"Cập nhật: {refreshed.get('data_as_of', 'N/A')}"
+            )
+        else:
+            st.caption(
+                f"Ngoài giờ giao dịch · Đang dùng giá đóng cửa phiên gần nhất "
+                f"({refreshed.get('data_as_of', 'N/A')})."
+            )
 
 # CSS: Nền tím than đậm, đổ bóng, hiệu ứng hover pop-up
 st.markdown("""
@@ -157,43 +214,24 @@ st.markdown("""
     /* HIỆU ỨNG MỚI: POP UP TẤT CẢ, BLING BLING, ĐỔ BÓNG   */
     /* ---------------------------------------------------- */
     
-    /* 1. Giãn chữ, IN ĐẬM và đổ bóng TRẮNG mặc định cho MỌI YẾU TỐ CHỨA TEXT */
-    p, li, span, th, td, h1, h2, h3, h4, label, div {
-        letter-spacing: 1.2px !important;
-    }
-    
-    p, li, span, th, td, h1, h2, h3, h4, label {
-        font-weight: 800 !important;
-        text-shadow: 0 0 6px rgba(255, 255, 255, 0.5), 0 1px 3px rgba(0, 0, 0, 0.5) !important;
-        transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    }
-    
     /* Ẩn dòng chữ Press Enter to submit form bị đè lên ô input */
     [data-testid="InputInstructions"] {
         display: none !important;
     }
 
-    /* 2. Pop up mọi text khi rê chuột */
-    p:hover, li:hover, th:hover, td:hover, h1:hover, h2:hover, h3:hover, label:hover {
-        transform: translateY(-2px) scale(1.01);
-        text-shadow: 0 0 8px rgba(138, 43, 226, 0.3);
-        color: #d69e2e !important;
-        z-index: 50;
-        position: relative;
+    [data-testid="stMetric"] {
+        overflow: visible !important;
     }
-
-    /* 3. Hiệu ứng hover từng chữ cho phần Intro */
-    .hover-word {
-        display: inline-block;
-        transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), text-shadow 0.3s ease, color 0.3s ease;
+    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] div,
+    [data-testid="stMetricValue"] {
+        white-space: normal !important;
+        overflow-wrap: anywhere !important;
+        text-overflow: clip !important;
     }
-    .hover-word:hover {
-        transform: translateY(-5px) scale(1.1);
-        text-shadow: 0 5px 15px rgba(138, 43, 226, 0.4);
-        color: #d69e2e !important;
-        cursor: default;
-        z-index: 100;
-        position: relative;
+    .summary-box {
+        overflow-wrap: anywhere;
+        white-space: normal;
+        line-height: 1.65;
     }
 
     /* 4. Đổ bóng lấp lánh liên tục và hiệu ứng shine cho các hộp (Box) ở vùng nền */
@@ -239,8 +277,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def hoverify(text):
-    # Tách chữ và bọc thẻ span, bỏ qua khoảng trắng thừa
-    return ' '.join([f'<span class="hover-word">{w}</span>' for w in text.split()])
+    return html.escape(str(text)).replace("\n", "<br>")
 
 st.markdown(f'<div class="main-title">{hoverify("HỆ THỐNG PHÂN TÍCH CƠ HỘI ĐẦU TƯ CỔ PHIẾU")}</div>', unsafe_allow_html=True)
 
@@ -252,11 +289,26 @@ with st.form("search_form"):
     with col_btn:
         analyze_btn = st.form_submit_button("🚀 Truy Xuất Báo Cáo", use_container_width=True)
 
+if analyze_btn and not ticker_input:
+    st.session_state.pop("report_ticker", None)
+    st.session_state.pop("report_data", None)
+
 if analyze_btn and ticker_input:
-    ticker = ticker_input.strip().upper()
+    submitted_ticker = ticker_input.strip().upper()
+    if submitted_ticker != st.session_state.get("report_ticker"):
+        st.session_state.pop("report_data", None)
+    st.session_state["report_ticker"] = submitted_ticker
+
+if st.session_state.get("report_ticker"):
+    ticker = st.session_state["report_ticker"]
     with st.spinner(f"Hệ thống đang xử lý dữ liệu cho {ticker}..."):
         try:
-            report_data = load_stock_report_data(ticker)
+            if analyze_btn or "report_data" not in st.session_state:
+                report_data = load_stock_report_data(ticker)
+                st.session_state["report_data"] = report_data
+            else:
+                report_data = st.session_state["report_data"]
+            _refresh_report_quote(ticker)
             
             # Hàm loại bỏ từ workbook
             def clean_text(text):
@@ -280,7 +332,8 @@ if analyze_btn and ticker_input:
             os.makedirs("outputs", exist_ok=True)
             
             pdf_data = report_data.copy()
-            pdf_data["price_chart"] = "" # Workaround lỗi SVG
+            pdf_data.pop("price_history", None)
+            pdf_data.pop("_scoring_data", None)
             generate_pdf(pdf_data, output_path=pdf_path)
             
             with open(pdf_path, "rb") as f:
@@ -303,33 +356,112 @@ if analyze_btn and ticker_input:
             st.markdown(f'<div class="section-header">💎 {hoverify("1. Chỉ Số Giao Dịch & Khuyến Nghị")}</div>', unsafe_allow_html=True)
             
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Giá Hiện Tại", report_data.get("current_price", "N/A"))
-            c2.metric("Khuyến Nghị", report_data.get("recommendation", "N/A"))
-            c3.metric("Giá Mục Tiêu", report_data.get("target_price", "N/A"))
+            c1.metric(
+                "Giá Hiện Tại",
+                report_data.get("current_price", "N/A"),
+                help=report_data.get("price_source"),
+            )
+            c2.metric(
+                "Khuyến Nghị",
+                report_data.get("recommendation", "N/A"),
+                help=report_data.get("investment_thesis"),
+            )
+            c3.metric(
+                "Giá Mục Tiêu",
+                report_data.get("target_price", "N/A"),
+                help=report_data.get("target_method", ""),
+            )
             c4.metric("Tiềm Năng", report_data.get("upside", "N/A"))
 
             c5, c6, c7, c8 = st.columns(4)
-            c5.metric("Dải Giá 52 Tuần", report_data.get("price_52w_range", "N/A"))
-            c6.metric("KLGD 20 Phiên", report_data.get("avg_volume_20d", "N/A"))
-            c7.metric("Vốn Hóa", report_data.get("market_cap", "N/A"))
-            c8.metric("CP Lưu Hành", report_data.get("shares_outstanding", "N/A"))
+            c5.metric(
+                "Dải Giá 52 Tuần",
+                report_data.get("price_52w_range", "N/A"),
+                help="Biên độ thấp nhất–cao nhất trong khoảng 52 tuần gần nhất.",
+            )
+            c6.metric(
+                "KLGD 20 Phiên",
+                report_data.get("avg_volume_20d", "N/A"),
+                help="Khối lượng giao dịch trung bình của 20 phiên gần nhất.",
+            )
+            c7.metric(
+                "Vốn Hóa",
+                report_data.get("market_cap", "N/A"),
+                help=(
+                    "Vốn hóa theo hồ sơ công ty; nếu nguồn chỉ có số cổ phiếu, "
+                    "hệ thống ước tính bằng giá tham chiếu nhân số cổ phiếu."
+                ),
+            )
+            c8.metric(
+                "CP Lưu Hành",
+                report_data.get("shares_outstanding", "N/A"),
+                help="Số cổ phiếu phát hành/lưu hành do nguồn hồ sơ VNStock VCI cung cấp.",
+            )
 
             c9, c10, c11, c12 = st.columns(4)
-            c9.metric("Sở Hữu Nước Ngoài", report_data.get("foreign_ownership", "N/A"))
+            foreign_limit = report_data.get("foreign_ownership_limit", "Chưa có dữ liệu")
+            c9.metric(
+                "Sở Hữu Nước Ngoài",
+                report_data.get("foreign_ownership", "N/A"),
+                help=(
+                    "Tỷ lệ cổ phần hiện do nhà đầu tư nước ngoài nắm giữ; không phải room còn lại. "
+                    f"Giới hạn sở hữu tối đa theo nguồn hồ sơ: {foreign_limit}."
+                ),
+            )
             c10.metric("Hệ số Beta", report_data.get("beta", "N/A"))
             c11.metric("Đầu Tư", report_data.get("investment_horizon", "N/A"))
-            c12.metric("Nguồn Giá", report_data.get("price_source", "N/A"))
+            pe_value = report_data.get("fundamental_metrics", {}).get("pe")
+            c12.metric(
+                "P/E",
+                f"{pe_value:.2f} lần" if pe_value is not None else "Chưa có dữ liệu",
+                help="P/E được đọc từ chỉ tiêu pe_ratio trong bảng ratio của VNStock.",
+            )
+            st.caption(f"Nguồn giá: {report_data.get('price_source', 'Chưa có dữ liệu')}")
+            eps_value = report_data.get("fundamental_metrics", {}).get("eps")
+            eps_column, _ = st.columns([1, 3])
+            eps_column.metric(
+                "EPS (đồng/cổ phiếu)",
+                f"{eps_value:,.0f} đ" if eps_value is not None else "Chưa có dữ liệu",
+                help=(
+                    "EPS trailing 4 quý do VNStock cung cấp; đơn vị là đồng trên "
+                    "mỗi cổ phiếu, không phải nghìn đồng."
+                ),
+            )
+            missing_metadata = report_data.get("metadata_missing", [])
+            if report_data.get("company_metadata_error"):
+                st.warning(report_data["company_metadata_error"])
+            if missing_metadata:
+                st.info(
+                    "Chưa có dữ liệu nguồn cho: "
+                    + ", ".join(missing_metadata)
+                    + ". Dashboard không tự ước lượng các trường này."
+                )
+            elif report_data.get("company_metadata_as_of"):
+                st.caption(
+                    f"Hồ sơ doanh nghiệp lấy từ "
+                    f"{report_data.get('company_metadata_source', 'VNStock VCI')} · "
+                    f"{report_data['company_metadata_as_of']}"
+                )
+            if report_data.get("quote_error"):
+                st.warning(
+                    f"{report_data['quote_error']} "
+                    "Đang hiển thị giá đóng cửa gần nhất thay thế."
+                )
 
             # --- 2. BIỂU ĐỒ GIÁ ---
             st.markdown(f'<div class="section-header">📈 {hoverify("2. Biểu Đồ Diễn Biến Giá")}</div>', unsafe_allow_html=True)
             
             # Vẽ biểu đồ nến bằng Plotly thay vì SVG tĩnh
             try:
-                df_all = pd.read_csv("output/stock_data.csv")
-                df_stock = df_all[df_all['symbol'] == ticker].copy()
+                df_stock = report_data["price_history"].copy()
                 if not df_stock.empty:
                     df_stock['date'] = pd.to_datetime(df_stock['date'])
                     df_stock = df_stock.sort_values('date')
+                    current_price = (
+                        report_data.get("_scoring_data", {})
+                        .get("tech", {})
+                        .get("close")
+                    )
                     # Chuyển ngày sang chuỗi để loại bỏ hoàn toàn khoảng trống giữa các nến
                     df_stock['date_str'] = df_stock['date'].dt.strftime('%d-%m-%Y')
                     
@@ -341,9 +473,28 @@ if analyze_btn and ticker_input:
                                     increasing_line_color='#089981', increasing_fillcolor='#089981', # Xanh TradingView
                                     decreasing_line_color='#F23645', decreasing_fillcolor='#F23645', # Đỏ TradingView
                                     name='Giá')])
+                    if current_price is not None:
+                        current_label = (
+                            "Giá realtime"
+                            if report_data.get("quote_is_realtime")
+                            else "Giá đóng cửa"
+                        )
+                        fig.add_hline(
+                            y=current_price,
+                            line_dash="dot",
+                            line_color="#f6c85f",
+                            annotation_text=current_label,
+                            annotation_position="top left",
+                        )
                     
-                    min_price = df_stock['low'].min() * 0.8
-                    max_price = df_stock['high'].max() * 1.2
+                    min_price = min(
+                        df_stock['low'].min(),
+                        current_price if current_price is not None else float("inf"),
+                    ) * 0.8
+                    max_price = max(
+                        df_stock['high'].max(),
+                        current_price if current_price is not None else float("-inf"),
+                    ) * 1.2
                     
                     min_date = df_stock['date'].min() - pd.Timedelta(days=10)
                     max_date = df_stock['date'].max() + pd.Timedelta(days=10)
@@ -377,9 +528,13 @@ if analyze_btn and ticker_input:
                             tickformat="%d-%m-%Y"
                         )
                     )
-                    st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': False})
+                    st.plotly_chart(
+                        fig,
+                        width="stretch",
+                        config={"scrollZoom": True, "displayModeBar": False},
+                    )
                 else:
-                    st.warning("Không tìm thấy dữ liệu giá trong CSV để vẽ biểu đồ nến.")
+                    st.warning("Không tìm thấy dữ liệu lịch sử để vẽ biểu đồ nến.")
             except Exception as e:
                 # Fallback to SVG
                 st.error(f"Error drawing Plotly: {e}")
@@ -389,19 +544,137 @@ if analyze_btn and ticker_input:
                 else:
                     st.warning("Không thể hiển thị biểu đồ.")
 
+            st.markdown(
+                f'<div class="section-header">📊 {hoverify("3. Chỉ Báo Kỹ Thuật")}</div>',
+                unsafe_allow_html=True,
+            )
+            technical_metrics = report_data.get("technical_metrics", [])
+            if technical_metrics:
+                st.caption(
+                    f"Chỉ báo kỹ thuật tính đến phiên đóng cửa "
+                    f"{report_data.get('technical_as_of', 'gần nhất')}; "
+                    "giá khớp cập nhật riêng trong giờ giao dịch."
+                )
+                for start in range(0, len(technical_metrics), 6):
+                    metric_row = technical_metrics[start:start + 6]
+                    columns = st.columns(len(metric_row))
+                    for column, metric in zip(columns, metric_row):
+                        column.metric(metric["label"], metric["value"])
+
             # --- 3. TÓM TẮT PHÂN TÍCH & LUẬN ĐIỂM ---
-            st.markdown(f'<div class="section-header">🧠 {hoverify("3. Tóm Tắt Phân Tích & Luận Điểm")}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="section-header">🧠 {hoverify("4. Tóm Tắt Phân Tích & Luận Điểm")}</div>', unsafe_allow_html=True)
             
             ai_sum = clean_text(report_data.get('ai_summary', 'Không có dữ liệu phân tích.'))
             st.markdown(f'<div class="summary-box"><b>{hoverify("Tổng hợp nhận định chuyên sâu:")}</b><br>{hoverify(ai_sum)}</div>', unsafe_allow_html=True)
             
-            inv_thesis = clean_text(report_data.get("investment_thesis", ""))
-            if inv_thesis:
-                st.markdown(f'<div class="summary-box"><b>{hoverify("Cơ sở luận điểm:")}</b> {hoverify(inv_thesis)}</div>', unsafe_allow_html=True)
+            score_breakdown = report_data.get("score_breakdown", {})
+            if score_breakdown:
+                with st.expander("Vì sao hệ thống ra số điểm và khuyến nghị này?"):
+                    st.markdown(
+                        f"**{report_data.get('recommendation', 'Chưa có khuyến nghị')}** "
+                        f"với tổng điểm **{score_breakdown.get('total_score')}/100**."
+                    )
+                    st.markdown(
+                        f"Giá tham chiếu: **{report_data.get('current_price', 'N/A')}** · "
+                        f"Giá mục tiêu: **{report_data.get('target_price', 'N/A')}** · "
+                        f"Tiềm năng: **{report_data.get('upside', 'N/A')}**."
+                    )
+                    target_method = report_data.get("target_method")
+                    target_confidence = report_data.get("target_confidence")
+                    if target_method:
+                        st.caption(
+                            f"Định giá: {target_method}. "
+                            f"Độ tin cậy: {target_confidence or 'chưa đánh giá'}."
+                        )
+                    valuation_summary = report_data.get("valuation_summary")
+                    if valuation_summary:
+                        st.caption(valuation_summary)
+                    valuation_methods = report_data.get("valuation_methods", [])
+                    if valuation_methods:
+                        valuation_rows = [
+                            {
+                                "Phương pháp": method["method_name"],
+                                "Giá trị hợp lý (đồng/CP)": method["fair_value"],
+                                "Tỷ trọng": method["weight"],
+                            }
+                            for method in valuation_methods
+                        ]
+                        valuation_rows.append(
+                            {
+                                "Phương pháp": "Giá mục tiêu tổng hợp",
+                                "Giá trị hợp lý (đồng/CP)": report_data.get(
+                                    "target_price", "Chưa đủ dữ liệu"
+                                ),
+                                "Tỷ trọng": "—",
+                            }
+                        )
+                        st.dataframe(
+                            valuation_rows,
+                            hide_index=True,
+                            width="stretch",
+                            alt="Các phương pháp định giá, tỷ trọng và giá mục tiêu tổng hợp",
+                        )
+                    group_labels = {
+                        "technical": "Kỹ thuật",
+                        "fundamental": "Cơ bản",
+                        "news": "Tin tức",
+                    }
+                    group_rows = [
+                        {
+                            "Nhóm": group_labels.get(group["name"], group["name"]),
+                            "Điểm": group["score"],
+                            "Trọng số ban đầu": f"{group['weight']:.0%}",
+                            "Đóng góp sau chuẩn hóa": f"{group['weighted_points']:.1f}",
+                        }
+                        for group in score_breakdown.get("groups", [])
+                    ]
+                    if group_rows:
+                        st.dataframe(
+                            pd.DataFrame(group_rows),
+                            hide_index=True,
+                            width="stretch",
+                            alt="Điểm, trọng số và đóng góp của từng nhóm phân tích",
+                        )
+                    bonus = score_breakdown.get("bonus", 0)
+                    st.caption(
+                        f"Tổng điểm: {score_breakdown.get('total_score')}/100 · "
+                        f"Khuyến nghị: {score_breakdown.get('recommendation')} · "
+                        f"MUA từ {score_breakdown.get('buy_threshold')}/100, "
+                        f"BÁN dưới {score_breakdown.get('sell_threshold')}/100, "
+                        "còn lại là GIỮ. "
+                        f"{score_breakdown.get('formula', '')} "
+                        f"Điểm cộng kết hợp: +{bonus}."
+                    )
+                    for key, title in (
+                        ("technical_factors", "Chi tiết điểm kỹ thuật"),
+                        ("fundamental_factors", "Chi tiết điểm cơ bản"),
+                        ("news_factors", "Chi tiết điểm tin tức"),
+                    ):
+                        factors = score_breakdown.get(key, [])
+                        if factors:
+                            st.markdown(f"**{title}**")
+                            st.dataframe(
+                                [
+                                    {
+                                        "Tiêu chí": factor["label"],
+                                        "Dữ liệu": factor.get("evidence", ""),
+                                        "Quy tắc": factor.get("rule", ""),
+                                        "Tác động": (
+                                            f"{factor['points']:+d} điểm"
+                                            if factor.get("points") is not None
+                                            else "Không chấm"
+                                        ),
+                                    }
+                                    for factor in factors
+                                ],
+                                hide_index=True,
+                                width="stretch",
+                                alt=f"Chi tiết bằng chứng và quy tắc chấm điểm: {title}",
+                            )
 
             col_points, col_risks = st.columns(2)
             with col_points:
-                points_html = f'<div class="summary-box"><b>✅ {hoverify("Điểm Nhấn Kỹ Thuật/Đầu Tư:")}</b><ul style="margin-top: 10px;">'
+                points_html = f'<div class="summary-box"><b>✅ {hoverify("Tín hiệu tích cực được bộ quy tắc ghi nhận:")}</b><ul style="margin-top: 10px;">'
                 points = report_data.get("investment_points", [])
                 if points:
                     for p in points:
@@ -412,7 +685,7 @@ if analyze_btn and ticker_input:
                 st.markdown(points_html, unsafe_allow_html=True)
             
             with col_risks:
-                risks_html = f'<div class="summary-box"><b>⚠️ {hoverify("Rủi Ro Cần Lưu Ý:")}</b><ul style="margin-top: 10px;">'
+                risks_html = f'<div class="summary-box"><b>⚠️ {hoverify("Rủi ro hoặc điều kiện làm giảm điểm:")}</b><ul style="margin-top: 10px;">'
                 risks = report_data.get("key_risks", [])
                 if risks:
                     for r in risks:
@@ -423,13 +696,117 @@ if analyze_btn and ticker_input:
                 st.markdown(risks_html, unsafe_allow_html=True)
 
             # --- 4. DỮ LIỆU TÀI CHÍNH ---
-            st.markdown(f'<div class="section-header">🏦 {hoverify("4. Dữ Liệu Tài Chính & Dự Phóng")}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="section-header">🏦 {hoverify("5. Dữ Liệu Tài Chính & Dự Phóng")}</div>', unsafe_allow_html=True)
             fin_sections = report_data.get("financial_sections", [])
+            if report_data.get("financial_error"):
+                st.warning(
+                    f"Chưa tải được BCTC cho {ticker}: "
+                    f"{report_data['financial_error']}"
+                )
             
             if fin_sections:
+                chart_data = report_data.get("financial_chart_data", {})
+                chart_years = chart_data.get("years", [])
+                chart_choices = {
+                    "LNST": ("net_profit", "net_profit_yoy", chart_data.get("profit_label", "Lợi nhuận sau thuế")),
+                    chart_data.get("income_label", "Doanh thu thuần"): ("income", "income_yoy", chart_data.get("income_label", "Doanh thu thuần")),
+                }
+                available_charts = [
+                    label
+                    for label, (amount_key, _, _) in chart_choices.items()
+                    if any(
+                        value is not None
+                        for value in chart_data.get(amount_key, {}).values()
+                    )
+                ]
+                if chart_years and available_charts:
+                    selected_chart = st.segmented_control(
+                        "Chọn chỉ tiêu biểu đồ",
+                        available_charts,
+                        default=available_charts[0],
+                        required=True,
+                        key=f"financial-chart-{ticker}",
+                    )
+                    amount_key, yoy_key, amount_label = chart_choices[selected_chart]
+                    amounts = chart_data.get(amount_key, {})
+                    yoy_values = chart_data.get(yoy_key, {})
+                    financial_fig = go.Figure()
+                    financial_fig.add_bar(
+                        x=chart_years,
+                        y=[amounts.get(year) for year in chart_years],
+                        name=amount_label,
+                        text=[
+                            f"{amounts[year]:,.1f}" if amounts.get(year) is not None else ""
+                            for year in chart_years
+                        ],
+                        textposition="outside",
+                        marker_color="#1e3a8a",
+                    )
+                    yoy_series = [yoy_values.get(year) for year in chart_years]
+                    yoy_bound = max(
+                        max((abs(value) for value in yoy_series if value is not None), default=1),
+                        1,
+                    ) * 1.25
+                    financial_fig.add_scatter(
+                        x=chart_years,
+                        y=yoy_series,
+                        name="Tăng trưởng YoY",
+                        mode="lines+markers+text",
+                        text=[
+                            f"{value:+.1f}%" if value is not None else ""
+                            for value in yoy_series
+                        ],
+                        textposition="top center",
+                        connectgaps=False,
+                        yaxis="y2",
+                        line=dict(color="#10b981", width=3),
+                    )
+                    if chart_years and yoy_series[0] is None:
+                        financial_fig.add_annotation(
+                            x=chart_years[0],
+                            y=-yoy_bound * 0.82,
+                            yref="y2",
+                            text="N/A*",
+                            showarrow=False,
+                            font=dict(color="#718294", size=11),
+                        )
+                    financial_fig.update_layout(
+                        template="plotly_dark",
+                        height=380,
+                        margin=dict(l=30, r=30, t=30, b=30),
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        yaxis=dict(title="Tỷ đồng"),
+                        yaxis2=dict(
+                            title="YoY (%)",
+                            overlaying="y",
+                            side="right",
+                            range=[-yoy_bound, yoy_bound],
+                        ),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                    )
+                    st.plotly_chart(
+                        financial_fig,
+                        width="stretch",
+                        alt=f"Biểu đồ {amount_label} và tăng trưởng YoY của {ticker}",
+                        config={"displayModeBar": False},
+                    )
+                    st.caption(
+                        f"Nguồn: {report_data.get('fundamental_metrics', {}).get('source', 'BCTC đã lưu')}; "
+                        "cột hiển thị giá trị, đường hiển thị YoY. "
+                        + (
+                            f"* YoY năm {chart_years[0]} chưa tính vì thiếu số liệu "
+                            f"{int(chart_years[0]) - 1}."
+                            if chart_years and yoy_series[0] is None
+                            else ""
+                        )
+                    )
+
                 years = report_data.get("financial_years", [])
                 for section in fin_sections:
-                    st.markdown(f"**{clean_text(section.get('label', '')).upper()}**")
+                    st.markdown(
+                        f"**{clean_text(section.get('title', section.get('label', ''))).upper()}**"
+                    )
                     
                     html_table = "<div class='summary-box'><table class='custom-table'>"
                     # Header
@@ -450,6 +827,28 @@ if analyze_btn and ticker_input:
                     st.markdown(html_table, unsafe_allow_html=True)
             else:
                 st.write("*(Chưa có dữ liệu tài chính cho mã này)*")
+
+            st.markdown(
+                f'<div class="section-header">📰 {hoverify("6. Tin Tức Gần Đây")}</div>',
+                unsafe_allow_html=True,
+            )
+            news_list = report_data.get("news_list", [])
+            if news_list:
+                for news in news_list:
+                    if news.get("url"):
+                        st.link_button(news["title"], news["url"])
+                    else:
+                        st.markdown(f"**{news['title']}**")
+                    if news.get("date") or news.get("source"):
+                        st.caption(" · ".join(
+                            value for value in (news.get("date"), news.get("source")) if value
+                        ))
+                    if news.get("summary"):
+                        st.write(news["summary"])
+            elif report_data.get("news_error"):
+                st.warning(f"Không lấy được tin tức: {report_data['news_error']}")
+            else:
+                st.info("Chưa tìm thấy tin tức gần đây cho mã này.")
 
             # --- FOOTER ---
             footer_html = (

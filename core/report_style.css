@@ -11,21 +11,24 @@
 
 @page {
     size: a4 portrait;
-    margin: 1cm;
+    margin: 12mm 13mm 17mm;
+    @bottom-right {
+        content: "Trang " counter(page) " / " counter(pages);
+        font-family: 'VietnameseFont';
+        font-size: 6.5pt;
+        color: #8090a0;
+    }
 }
 
 body {
     font-family: 'VietnameseFont';
 }
-page {
-  size: A4;
-  margin: 12mm 13mm 13mm 13mm;
-}
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; font-family: 'VietnameseFont'; color: #14283b; font-size: 9pt; }
 body { background: #fff; }
-.page { position: relative; min-height: 272mm; page-break-after: always; }
-.page:last-child { page-break-after: auto; }
+.page { position: static; min-height: 0; page-break-after: auto; }
+.report-header, .stock-intro, .top-grid, .summary-box, .valuation-section,
+.two-columns, .analyst-line, .disclaimer { break-inside: avoid; }
 .report-header { display: grid; grid-template-columns: 1.05fr 1.45fr .82fr; min-height: 32mm; background: #102b40; color: #fff; border-radius: 2px; overflow: hidden; }
 .brand-block { padding: 4mm 3mm; border-right: 1px solid #536d80; display: flex; flex-direction: column; justify-content: center; }
 .brand-mark { display: inline-block; align-self: flex-start; border: 1px solid #e7bd62; color: #fff; padding: 1mm 2mm; font: bold 16pt Georgia, serif; margin-bottom: 2mm; }
@@ -48,7 +51,7 @@ body { background: #fff; }
 .top-grid { display: grid; grid-template-columns: 1.25fr .95fr; gap: 4mm; margin-bottom: 4mm; }
 .panel { min-width: 0; }
 .panel h3, .summary-box h3, .disclaimer h3 { font-size: 9pt; color: #12334b; margin: 0 0 1.5mm; padding-bottom: 1.5mm; border-bottom: 1px solid #2879bd; letter-spacing: .15px; }
-.chart-frame { height: 42mm; border: 1px solid #cbd8e2; background: #fbfdff; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.chart-frame { height: 52mm; border: 1px solid #cbd8e2; background: #fbfdff; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .chart-frame img { width: 100%; height: 100%; object-fit: contain; }
 .chart-placeholder { text-align: center; color: #6e8293; padding: 5mm; display: flex; flex-direction: column; gap: 2mm; font-size: 7.5pt; }
 .chart-placeholder strong { color: #294a63; }
@@ -57,21 +60,28 @@ body { background: #fff; }
 .metric-table td { padding: 1.25mm 0; border-bottom: 1px solid #d8e1e8; }
 .metric-table td:first-child { color: #63778a; padding-right: 2mm; }
 .metric-table td:last-child { text-align: right; font-weight: bold; color: #18374f; white-space: nowrap; }
+.metric-table .metric-group td { padding-top: 2mm; color: #2376b9; font-size: 6.5pt; text-align: left; border-bottom-color: #9bbbd3; }
 .financial-section { margin-top: 1mm; }
 .financial-table { font-size: 7.1pt; }
-.financial-table thead th { background: #2376b9; color: #fff; font-weight: bold; padding: 1.6mm 1.4mm; text-align: right; }
+.financial-table thead th { background: #2376b9; color: #fff; font-weight: bold; padding: 1.1mm 1.4mm; text-align: right; }
 .financial-table thead th:first-child { text-align: left; width: 37%; }
-.financial-table tbody td { padding: 1.25mm 1.4mm; border-bottom: 1px solid #d7e0e8; text-align: right; }
+.financial-table tbody td { padding: .65mm 1.4mm; border-bottom: 1px solid #d7e0e8; text-align: right; }
 .financial-table tbody td:first-child { text-align: left; }
 .financial-table tbody tr:nth-child(even):not(.section-row) { background: #eef4f9; }
-.financial-table .section-row th { background: #102b40; color: #fff; text-align: left; padding: 1.5mm 1.4mm; font-size: 7pt; letter-spacing: .15px; }
+.financial-table .section-row th { background: #102b40; color: #fff; text-align: left; padding: 1mm 1.4mm; font-size: 7pt; letter-spacing: .15px; }
 .investment-thesis { margin-top: 4mm; }
 .thesis-content { min-height: 10mm; white-space: pre-line; font-size: 8pt; line-height: 1.5; color: #304a60; }
-.page-footer { position: absolute; bottom: 0; left: 0; right: 0; padding-top: 2mm; border-top: 1px solid #d6e0e8; color: #8090a0; display: flex; justify-content: space-between; font-size: 6.5pt; }
+.page-footer { position: fixed; bottom: -13mm; left: 0; right: 0; padding-top: 2mm; border-top: 1px solid #d6e0e8; color: #8090a0; display: flex; justify-content: space-between; font-size: 6.5pt; }
 .page-two { padding-top: 0; }
+.two-columns-top { display: grid; grid-template-columns: 1fr; gap: 5mm; align-items: start; margin-bottom: 4mm; }
+.chart-panel { min-width: 0; }
+.small-chart-frame { border: 1px solid #cbd8e2; background: #fff; padding: 2mm; }
+.small-chart-frame img { display: block; width: 100%; height: auto; }
+.financial-charts { margin: 3mm 0 5mm; break-inside: avoid; }
 .summary-box { background: #eef5fb; border-left: 3px solid #267fc0; padding: 4mm; margin: 0 0 5mm; }
 .summary-box h3 { border: 0; margin-bottom: 2mm; padding: 0; font-size: 8pt; }
 .summary-box p { margin: 0; font-size: 8.3pt; line-height: 1.6; color: #29465d; white-space: pre-line; }
+.summary-box .thesis-note { margin-top: 2mm; padding-top: 2mm; border-top: 1px solid #d5e2ec; font-size: 7.5pt; }
 .two-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 7mm; }
 .bullet-panel h3 { margin-bottom: 2mm; }
 .bullet-panel ul { margin: 0; padding-left: 4mm; }
@@ -83,6 +93,73 @@ body { background: #fff; }
 .disclaimer { margin-top: 5mm; border: 1px solid #ccd8e3; border-radius: 2px; padding: 3mm 4mm; background: #fbfcfd; }
 .disclaimer h3 { font-size: 7pt; border: 0; padding: 0; margin-bottom: 2mm; }
 .disclaimer p { font-size: 6.5pt; line-height: 1.5; color: #687a89; margin: 0; }
+.score-section { margin: 3mm 0; }
+.score-section .source-note { line-height: 1.4; }
+.score-section .metric-table { margin-top: 2mm; }
+.valuation-table th { text-align: left; color: #63778a; padding: 1.5mm 1mm; border-bottom: 1px solid #d8e1e8; }
+.valuation-table td { padding: 1.5mm 1mm; }
+.target-price-row td { background: #eaf4fb; border-top: 1px solid #8eb8d4; color: #12334b !important; font-weight: bold; }
+.target-price-row td:last-child { color: #13764f !important; font-size: 9pt; }
+.score-factor-title { color: #2376b9; font-size: 7.5pt; margin: 3mm 0 1mm; }
+.score-detail-table { width: 100%; border-collapse: collapse; font-size: 6.4pt; margin: 0 0 2mm; }
+.score-detail-table th { background: #edf3f7; color: #29465d; font-size: 6.2pt; text-align: left; padding: 1mm; border-bottom: 1px solid #cbd8e2; }
+.score-detail-table td { padding: 1mm; border-bottom: 1px solid #e2e8ed; vertical-align: top; line-height: 1.35; }
+.score-detail-table tr { break-inside: avoid; }
+.score-detail-table th:first-child { width: 18%; }
+.score-detail-table th:nth-child(2) { width: 21%; }
+.score-detail-table th:last-child, .score-detail-table td:last-child { width: 15%; text-align: right; white-space: nowrap; }
+.score-positive { color: #13764f; font-weight: bold; }
+.score-negative { color: #b6423c; font-weight: bold; }
+.score-not-applied { color: #718294; }
 body, table, td, th, h1, h2, h3, h4, p, div, span, ul, li, strong, header, section, footer {
     font-family: 'VietnameseFont';
+}
+/* Styling cho Khối Tin Tức & Sự Kiện */
+.news-section {
+    margin-bottom: 15px;
+}
+
+.news-list {
+    list-style-type: square;
+    padding-left: 18px;
+    margin: 8px 0;
+}
+
+.news-list li {
+    margin-bottom: 6px;
+    line-height: 1.35;
+}
+
+.news-title {
+    color: #1a365d;
+    font-size: 9.5pt;
+}
+
+.news-title a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.news-date {
+    color: #718096;
+    font-size: 8.5pt;
+    margin-left: 4px;
+}
+
+.news-summary {
+    color: #4a5568;
+    font-size: 8.5pt;
+    margin: 2px 0 4px 0;
+}
+
+/* Khung hiển thị trống khi không có tin tức */
+.news-empty-box {
+    border: 1px dashed #cbd5e0;
+    background-color: #f8fafc;
+    color: #718096;
+    text-align: center;
+    padding: 12px;
+    font-size: 9pt;
+    border-radius: 4px;
+    margin: 8px 0;
 }

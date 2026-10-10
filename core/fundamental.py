@@ -28,6 +28,11 @@ try:
 except ImportError:
     Fundamental = None
 
+try:
+    from .financial_alignment import normalize_statement_year_order
+except ImportError:
+    from financial_alignment import normalize_statement_year_order
+
 
 # ============================================================
 # 1. CAU HINH DUONG DAN
@@ -123,9 +128,11 @@ def fetch_report(company, method_name):
         return pd.DataFrame()
 
     if isinstance(df, pd.DataFrame):
-        return df
+        report = df.copy()
+    else:
+        report = pd.DataFrame(df)
 
-    return pd.DataFrame(df)
+    return report
 
 
 # ============================================================
@@ -316,7 +323,7 @@ def collect_ticker_financials(ticker, api=None):
         raise ValueError("Ma co phieu khong hop le.")
     if Fundamental is None:
         raise RuntimeError(
-            "Chua co VNStock. Cai dat bang: python -m pip install -r requirements-financial.txt"
+            "Chua co VNStock. Cai dat bang: python -m pip install -r requirements.txt"
         )
     api = api or Fundamental()
     reports = fetch_one_ticker(api, ticker)
@@ -395,6 +402,25 @@ def fetch_one_ticker(api, ticker):
             company_data[report_name] = pd.DataFrame()
             FETCH_ERRORS[ticker][report_name] = str(error)
 
+    ratio_data = company_data.get("ratio", pd.DataFrame())
+    year_columns = sorted(
+        (column for column in ratio_data.columns if str(column).isdigit()),
+        key=int,
+    )
+    if year_columns:
+        for report_name in ("income_statement", "balance_sheet"):
+            statement = company_data.get(report_name, pd.DataFrame())
+            aligned = normalize_statement_year_order(
+                statement, ratio_data, year_columns
+            )
+            if not aligned.equals(statement):
+                company_data[report_name] = aligned
+                save_csv(aligned, RAW_DIR / f"{ticker}_{report_name}.csv")
+                print(
+                    f"[OK] {ticker} - {report_name}: "
+                    "da doi chieu va can chinh thu tu nam theo chi so tang truong"
+                )
+
     return company_data
 
 
@@ -456,7 +482,7 @@ def main():
 
     if Fundamental is None:
         print("[LOI] Chua co VNStock. Module nay can goi vnstock de truy cap BCTC truc tuyen.")
-        print("      Cai dat bang: python -m pip install -r requirements-financial.txt")
+        print("      Cai dat bang: python -m pip install -r requirements.txt")
         return
 
     print("=" * 60)
@@ -523,4 +549,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

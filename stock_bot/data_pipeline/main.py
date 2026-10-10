@@ -455,7 +455,10 @@ def start_realtime_pipeline():
             now = datetime.now()
             is_trading_hours = (
                 now.weekday() < 5
-                and dt_time(9, 0) <= now.time() <= dt_time(15, 0)
+                and (
+                    dt_time(9, 0) <= now.time() <= dt_time(11, 30)
+                    or dt_time(13, 0) <= now.time() <= dt_time(15, 0)
+                )
             )
             if not is_trading_hours:
                 continue

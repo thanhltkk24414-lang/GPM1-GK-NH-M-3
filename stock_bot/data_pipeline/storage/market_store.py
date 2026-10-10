@@ -12,15 +12,18 @@ class MarketStore:
         db_path="data/market_data.db"
     ):
 
+        db_path = Path(db_path)
+        if not db_path.is_absolute():
+            db_path = Path(__file__).resolve().parents[3] / db_path
         self.db_path = db_path
 
-        Path(db_path).parent.mkdir(
+        self.db_path.parent.mkdir(
             parents=True,
             exist_ok=True
         )
 
         self.conn = sqlite3.connect(
-            self.db_path,
+            str(self.db_path),
             check_same_thread=False
         )
 
@@ -64,6 +67,33 @@ class MarketStore:
                 ON market_data(timestamp)
             """)
 
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS market_quote_latest (
+                    symbol TEXT PRIMARY KEY,
+                    price REAL,
+                    volume REAL,
+                    bid REAL,
+                    ask REAL,
+                    data_type TEXT,
+                    timestamp TEXT NOT NULL
+                )
+            """)
+            self.cursor.execute("""
+                SELECT symbol, price, volume, bid, ask, data_type, timestamp
+                FROM market_quote_latest
+            """)
+            self.latest = {
+                row[0]: {
+                    "symbol": row[0],
+                    "price": row[1],
+                    "volume": row[2],
+                    "bid": row[3],
+                    "ask": row[4],
+                    "data_type": row[5],
+                    "timestamp": row[6],
+                }
+                for row in self.cursor.fetchall()
+            }
             self.conn.commit()
 
     # =====================================================
@@ -162,9 +192,27 @@ class MarketStore:
                 "timestamp": timestamp
             }
 
-            # ---------------------------------------------
-            # Cập nhật cache
-            # ---------------------------------------------
+            self.cursor.execute("""
+                INSERT INTO market_quote_latest
+                    (symbol, price, volume, bid, ask, data_type, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                    price = excluded.price,
+                    volume = excluded.volume,
+                    bid = excluded.bid,
+                    ask = excluded.ask,
+                    data_type = excluded.data_type,
+                    timestamp = excluded.timestamp
+            """, (
+                symbol,
+                price,
+                volume,
+                bid,
+                ask,
+                data_type,
+                str(timestamp),
+            ))
+            self.conn.commit()
 
             self.latest[symbol] = record
 

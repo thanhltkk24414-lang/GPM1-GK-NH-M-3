@@ -6,11 +6,11 @@
   <link rel="stylesheet" href="report_style.css">
 </head>
 <body>
-  <!-- TRANG 1: TỔNG QUAN VÀ DỮ LIỆU -->
+  <!-- ==================== TRANG 1: TỔNG QUAN, BIỂU ĐỒ & CHỈ SỐ ==================== -->
   <section class="page page-one">
     <header class="report-header">
       <div class="brand-block">
-        <div class="brand-mark">VSS</div>
+        <div class="brand-mark">FIN</div>
         <div class="brand-caption">KHỐI PHÂN TÍCH — EQUITY RESEARCH</div>
       </div>
       <div class="report-title">
@@ -44,11 +44,11 @@
         <h3>DIỄN BIẾN GIÁ &amp; THANH KHOẢN</h3>
         <div class="chart-frame">
           {% if price_chart %}
-            <img src="{{ price_chart }}" alt="Biểu đồ giá và thanh khoản">
+            <img src="{{ price_chart }}" alt="Biểu đồ kỹ thuật {{ ticker }}">
           {% else %}
             <div class="chart-placeholder">
               <strong>Biểu đồ giá và thanh khoản</strong>
-              <span>TV5/TV1 chèn biểu đồ từ dữ liệu giá sau khi tích hợp.</span>
+              <span>Không đủ dữ liệu OHLC để dựng biểu đồ kỹ thuật.</span>
             </div>
           {% endif %}
         </div>
@@ -59,22 +59,30 @@
         <h3>CHỈ SỐ GIAO DỊCH &amp; ĐỊNH GIÁ</h3>
         <table class="metric-table">
           <tbody>
-            <tr><td>Giá mục tiêu</td><td>{{ target_price }}</td></tr>
-            <tr><td>Giá hiện tại</td><td>{{ current_price }}</td></tr>
-            <tr><td>Tiềm năng tăng giá</td><td>{{ upside }}</td></tr>
+            <tr><td>Giá mục tiêu</td><td><strong>{{ target_price }}</strong></td></tr>
+            <tr><td>Giá hiện tại</td><td><strong>{{ current_price }}</strong></td></tr>
+            <tr><td>Tiềm năng tăng giá</td><td><strong>{{ upside }}</strong></td></tr>
             <tr><td>Vốn hóa thị trường</td><td>{{ market_cap }}</td></tr>
             <tr><td>Số cổ phiếu lưu hành</td><td>{{ shares_outstanding }}</td></tr>
             <tr><td>KLGD trung bình 20 phiên</td><td>{{ avg_volume_20d }}</td></tr>
             <tr><td>Dải giá 52 tuần</td><td>{{ price_52w_range }}</td></tr>
-            <tr><td>Sở hữu nước ngoài</td><td>{{ foreign_ownership }}</td></tr>
+            <tr><td>Sở hữu nước ngoài</td><td>{{ foreign_ownership }}{% if foreign_ownership_limit %} (tối đa {{ foreign_ownership_limit }}){% endif %}</td></tr>
             <tr><td>Beta (1 năm)</td><td>{{ beta }}</td></tr>
+            <tr class="metric-group"><td colspan="2">CHỈ BÁO KỸ THUẬT</td></tr>
+            {% for metric in technical_metrics %}
+            <tr><td>{{ metric.label }}</td><td>{{ metric.value }}</td></tr>
+            {% endfor %}
           </tbody>
         </table>
+        <p class="source-note">Chỉ báo kỹ thuật tính theo dữ liệu đóng cửa đến {{ technical_as_of }}; giá giao dịch được cập nhật riêng trong giờ giao dịch.</p>
       </div>
     </section>
 
     <section class="panel financial-section">
       <h3>CHỈ SỐ TÀI CHÍNH &amp; DỰ PHÓNG</h3>
+      {% if financial_error %}
+      <p class="source-note">Chưa tải được BCTC cho mã {{ ticker }}: {{ financial_error }}</p>
+      {% endif %}
       <table class="financial-table">
         <thead>
           <tr>
@@ -97,18 +105,133 @@
       <p class="source-note">Đơn vị và kỳ dữ liệu được trình bày theo nguồn đầu vào. Ký hiệu dự phóng cần được xác nhận rõ trước khi phát hành.</p>
     </section>
 
-    <section class="panel investment-thesis">
-      <h3>NHẬN ĐỊNH &amp; LUẬN ĐIỂM ĐẦU TƯ</h3>
-      <div class="thesis-content">{{ investment_thesis }}</div>
-    </section>
-    <footer class="page-footer"><span>{{ ticker }} | Báo cáo phân tích</span><span>Trang 1/2</span></footer>
   </section>
 
-  <!-- TRANG 2: TÓM TẮT, LUẬN ĐIỂM VÀ RỦI RO -->
+ <!-- ==================== TRANG 2: TÓM TẮT, ĐỊNH GIÁ, TIN TỨC & LUẬN ĐIỂM ==================== -->
   <section class="page page-two">
-    <section class="summary-box">
-      <h3>TÓM TẮT</h3>
-      <p>{{ ai_summary }}</p>
+    <section class="two-columns-top">
+      <div class="panel summary-box">
+        <h3>TÓM TẮT DỰ BÁO AI</h3>
+        <p>{{ ai_summary }}</p>
+        {% if investment_thesis %}
+        <p class="thesis-note">{{ investment_thesis }}</p>
+        {% endif %}
+      </div>
+    </section>
+
+    {% if financial_chart %}
+    <section class="panel chart-panel financial-charts">
+      <h3>KẾT QUẢ KINH DOANH &amp; TĂNG TRƯỞNG</h3>
+      <div class="small-chart-frame">
+        <img src="{{ financial_chart }}" alt="Biểu đồ doanh thu hoặc thu nhập lãi thuần và lợi nhuận sau thuế, kèm tăng trưởng YoY">
+      </div>
+    </section>
+    {% endif %}
+
+    {% if valuation_methods or valuation_summary %}
+    <section class="panel valuation-section">
+      <h3>KẾT QUẢ ĐỊNH GIÁ CỔ PHIẾU</h3>
+      {% if valuation_summary %}
+        <p class="valuation-note">{{ valuation_summary }}</p>
+      {% endif %}
+
+      {% if valuation_methods %}
+      <table class="metric-table valuation-table">
+        <thead>
+          <tr>
+            <th>Phương pháp định giá</th>
+            <th>Giá trị hợp lý (VND)</th>
+            <th>Tỷ trọng (%)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in valuation_methods %}
+          <tr>
+            <td>{{ item.method_name }}</td>
+            <td><strong>{{ item.fair_value }}</strong></td>
+            <td>{{ item.weight }}</td>
+          </tr>
+          {% endfor %}
+          {% if target_price and target_price not in ["—", "N/A"] %}
+          <tr class="target-price-row">
+            <td colspan="2">GIÁ MỤC TIÊU TỔNG HỢP</td>
+            <td><strong>{{ target_price }}</strong></td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% if score_breakdown %}
+    <section class="panel score-section">
+      <h3>CƠ SỞ CHẤM ĐIỂM &amp; KHUYẾN NGHỊ</h3>
+      <p class="source-note">{{ score_breakdown.formula }} Ngưỡng: MUA từ {{ score_breakdown.buy_threshold }}/100; BÁN dưới {{ score_breakdown.sell_threshold }}/100; còn lại GIỮ. Điểm cộng kết hợp: +{{ score_breakdown.bonus }}.</p>
+      {% if score_breakdown.groups %}
+      <table class="metric-table valuation-table">
+        <thead>
+          <tr><th>Nhóm tiêu chí</th><th>Điểm</th><th>Trọng số ban đầu</th><th>Điểm đóng góp</th></tr>
+        </thead>
+        <tbody>
+          {% for group in score_breakdown.groups %}
+          <tr>
+            <td>{{ {"technical": "Kỹ thuật", "fundamental": "Cơ bản", "news": "Tin tức"}.get(group.name, group.name) }}</td>
+            <td>{{ group.score }}/100</td>
+            <td>{{ "%.0f"|format(group.weight * 100) }}%</td>
+            <td>{{ "%.1f"|format(group.weighted_points) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% for factor_group, title in [
+        ("fundamental_factors", "Cơ bản"),
+        ("technical_factors", "Kỹ thuật"),
+        ("news_factors", "Tin tức")
+      ] %}
+      {% if score_breakdown[factor_group] %}
+      <h4 class="score-factor-title">{{ title }}</h4>
+      <table class="score-detail-table">
+        <thead>
+          <tr><th>Tiêu chí</th><th>Dữ liệu</th><th>Quy tắc chấm</th><th>Tác động</th></tr>
+        </thead>
+        <tbody>
+        {% for factor in score_breakdown[factor_group] %}
+          <tr>
+            <td>{{ factor.label }}</td>
+            <td>{{ factor.evidence }}</td>
+            <td>{{ factor.rule }}</td>
+            <td class="{% if factor.points is none %}score-not-applied{% elif factor.points > 0 %}score-positive{% elif factor.points < 0 %}score-negative{% endif %}">
+              {% if factor.points is not none %}{{ "%+d"|format(factor.points) }} điểm{% else %}Không chấm{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    <section class="panel news-section">
+      <h3>TIN TỨC &amp; SỰ KIỆN ĐÁNG CHÚ Ý</h3>
+      {% if news_list and news_list|length > 0 %}
+        <ul class="news-list">
+          {% for news in news_list %}
+            <li>
+              <span class="news-title"><strong>{% if news.url %}<a href="{{ news.url }}">{{ news.title }}</a>{% else %}{{ news.title }}{% endif %}</strong></span>
+              {% if news.date %}<span class="news-date">({{ news.date }})</span>{% endif %}
+              {% if news.summary %}<p class="news-summary">{{ news.summary }}</p>{% endif %}
+              {% if news.source %}<span class="news-date">Nguồn: {{ news.source }}</span>{% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+      <div class="news-empty-box">
+        {% if news_error %}Không lấy được tin tức: {{ news_error }}{% else %}Chưa tìm thấy tin tức gần đây cho mã cổ phiếu {{ ticker }}.{% endif %}
+      </div>
+      {% endif %}
     </section>
 
     <section class="two-columns">
@@ -129,17 +252,13 @@
     <section class="analyst-line">
       <strong>Chuyên viên phân tích:</strong> {{ analyst_name or "Nhóm phân tích" }}
       {% if analyst_contact %}<span>| {{ analyst_contact }}</span>{% endif %}
-      <div class="source-note">
-        Nguồn dữ liệu: {{ data_sources }}. Ngày cập nhật dữ liệu: {{ data_as_of }}.
-      </div>
+      <div class="source-note">Nguồn dữ liệu: {{ data_sources or "HOSE, HNX, BCTCN" }}. Cập nhật: {{ data_as_of or report_date }}.</div>
     </section>
 
     <section class="disclaimer">
       <h3>KHUYẾN CÁO</h3>
-      <p>{{ disclaimer or "Báo cáo này được xây dựng nhằm mục đích tham khảo và cung cấp thông tin, không phải lời mời chào mua hoặc bán bất kỳ chứng khoán nào. Dữ liệu có thể có sai sót hoặc thay đổi theo nguồn cung cấp; người đọc cần tự kiểm tra thông tin và cân nhắc mục tiêu, thời hạn đầu tư cũng như khả năng chấp nhận rủi ro trước khi ra quyết định. Nhận định tự động có thể không phản ánh đầy đủ mọi yếu tố thị trường. Nhóm thực hiện không cam kết lợi nhuận và không chịu trách nhiệm đối với quyết định đầu tư dựa trên báo cáo này." }}</p>
+      <p>{{ disclaimer or "Báo cáo này được xây dựng nhằm mục đích tham khảo, không phải lời mời chào mua hoặc bán chứng khoán. Nhóm thực hiện không chịu trách nhiệm đối với bất kỳ quyết định đầu tư nào dựa trên báo cáo này." }}</p>
     </section>
 
-    <footer class="page-footer"><span>{{ ticker }} | Báo cáo phân tích</span><span>Trang 2/2</span></footer>
   </section>
-</body>
-</html>
+  <footer class="page-footer"><span>{{ ticker }} | Báo cáo phân tích</span><span class="page-number">Trang <pdf:pagenumber> / <pdf:pagecount></span></footer>
