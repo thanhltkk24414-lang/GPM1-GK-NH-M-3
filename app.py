@@ -732,11 +732,11 @@ if st.session_state.get("report_ticker"):
                             y=[amounts.get(year) for year in chart_years],
                             name=amount_label,
                             text=[
-                                f"{amounts[year]:,.1f}" if amounts.get(year) is not None else ""
+                                f"<b>{amounts[year]:,.1f}</b>" if amounts.get(year) is not None else ""
                                 for year in chart_years
                             ],
                             textposition="outside",
-                            textfont=dict(color="#e2e8f0"),
+                            textfont=dict(color="#e2e8f0", size=14),
                             marker=dict(
                                 color="rgba(59, 130, 246, 0.85)",
                                 line=dict(color="#2563eb", width=1.5)
@@ -754,11 +754,11 @@ if st.session_state.get("report_ticker"):
                             name="Tăng trưởng YoY",
                             mode="lines+markers+text",
                             text=[
-                                f"{value:+.1f}%" if value is not None else ""
+                                f"<b>{value:+.1f}%</b>" if value is not None else ""
                                 for value in yoy_series
                             ],
                             textposition="bottom right",
-                            textfont=dict(color="#fcd34d", size=13),
+                            textfont=dict(color="#fcd34d", size=14),
                             connectgaps=False,
                             yaxis="y2",
                             line=dict(color="#f59e0b", width=3.5),
