@@ -720,79 +720,76 @@ if st.session_state.get("report_ticker"):
                     )
                 ]
                 if chart_years and available_charts:
-                    selected_chart = st.segmented_control(
-                        "Chọn chỉ tiêu biểu đồ",
-                        available_charts,
-                        default=available_charts[0],
-                        required=True,
-                        key=f"financial-chart-{ticker}",
-                    )
-                    amount_key, yoy_key, amount_label = chart_choices[selected_chart]
-                    amounts = chart_data.get(amount_key, {})
-                    yoy_values = chart_data.get(yoy_key, {})
-                    financial_fig = go.Figure()
-                    financial_fig.add_bar(
-                        x=chart_years,
-                        y=[amounts.get(year) for year in chart_years],
-                        name=amount_label,
-                        text=[
-                            f"{amounts[year]:,.1f}" if amounts.get(year) is not None else ""
-                            for year in chart_years
-                        ],
-                        textposition="outside",
-                        marker_color="#1e3a8a",
-                    )
-                    yoy_series = [yoy_values.get(year) for year in chart_years]
-                    yoy_bound = max(
-                        max((abs(value) for value in yoy_series if value is not None), default=1),
-                        1,
-                    ) * 1.25
-                    financial_fig.add_scatter(
-                        x=chart_years,
-                        y=yoy_series,
-                        name="Tăng trưởng YoY",
-                        mode="lines+markers+text",
-                        text=[
-                            f"{value:+.1f}%" if value is not None else ""
-                            for value in yoy_series
-                        ],
-                        textposition="top center",
-                        connectgaps=False,
-                        yaxis="y2",
-                        line=dict(color="#10b981", width=3),
-                    )
-                    if chart_years and yoy_series[0] is None:
-                        financial_fig.add_annotation(
-                            x=chart_years[0],
-                            y=-yoy_bound * 0.82,
-                            yref="y2",
-                            text="N/A*",
-                            showarrow=False,
-                            font=dict(color="#718294", size=11),
+                    cols = st.columns(len(available_charts))
+                    for col, label in zip(cols, available_charts):
+                        amount_key, yoy_key, amount_label = chart_choices[label]
+                        amounts = chart_data.get(amount_key, {})
+                        yoy_values = chart_data.get(yoy_key, {})
+                        financial_fig = go.Figure()
+                        financial_fig.add_bar(
+                            x=chart_years,
+                            y=[amounts.get(year) for year in chart_years],
+                            name=amount_label,
+                            text=[
+                                f"{amounts[year]:,.1f}" if amounts.get(year) is not None else ""
+                                for year in chart_years
+                            ],
+                            textposition="outside",
+                            marker_color="#1e3a8a",
                         )
-                    financial_fig.update_layout(
-                        template="plotly_dark",
-                        height=380,
-                        margin=dict(l=30, r=30, t=30, b=30),
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        yaxis=dict(title="Tỷ đồng"),
-                        yaxis2=dict(
-                            title="YoY (%)",
-                            overlaying="y",
-                            side="right",
-                            range=[-yoy_bound, yoy_bound],
-                        ),
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                    )
-                    st.plotly_chart(
-                        financial_fig,
-                        width="stretch",
-                        alt=f"Biểu đồ {amount_label} và tăng trưởng YoY của {ticker}",
-                        config={"displayModeBar": False},
-                    )
+                        yoy_series = [yoy_values.get(year) for year in chart_years]
+                        yoy_bound = max(
+                            max((abs(value) for value in yoy_series if value is not None), default=1),
+                            1,
+                        ) * 1.25
+                        financial_fig.add_scatter(
+                            x=chart_years,
+                            y=yoy_series,
+                            name="Tăng trưởng YoY",
+                            mode="lines+markers+text",
+                            text=[
+                                f"{value:+.1f}%" if value is not None else ""
+                                for value in yoy_series
+                            ],
+                            textposition="top center",
+                            connectgaps=False,
+                            yaxis="y2",
+                            line=dict(color="#10b981", width=3),
+                        )
+                        if chart_years and yoy_series[0] is None:
+                            financial_fig.add_annotation(
+                                x=chart_years[0],
+                                y=-yoy_bound * 0.82,
+                                yref="y2",
+                                text="N/A*",
+                                showarrow=False,
+                                font=dict(color="#718294", size=11),
+                            )
+                        financial_fig.update_layout(
+                            template="plotly_dark",
+                            height=380,
+                            margin=dict(l=30, r=30, t=30, b=30),
+                            title=dict(text=label, font=dict(size=14)),
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            yaxis=dict(title="Tỷ đồng"),
+                            yaxis2=dict(
+                                title="YoY (%)",
+                                overlaying="y",
+                                side="right",
+                                range=[-yoy_bound, yoy_bound],
+                            ),
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                        )
+                        with col:
+                            st.plotly_chart(
+                                financial_fig,
+                                use_container_width=True,
+                                config={"displayModeBar": False},
+                            )
+                    
                     st.caption(
-                        f"Nguồn: {report_data.get('fundamental_metrics', {}).get('source', 'BCTC đã lưu')}; "
+                        f"Nguồn: {report_data.get('fundamental_metrics', {}).get('source', 'BCTC')}; "
                         "cột hiển thị giá trị, đường hiển thị YoY. "
                         + (
                             f"* YoY năm {chart_years[0]} chưa tính vì thiếu số liệu "
@@ -801,7 +798,6 @@ if st.session_state.get("report_ticker"):
                             else ""
                         )
                     )
-
                 years = report_data.get("financial_years", [])
                 for section in fin_sections:
                     st.markdown(
