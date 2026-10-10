@@ -67,6 +67,11 @@ def _refresh_report_quote(ticker):
 # CSS: Nền tím than đậm, đổ bóng, hiệu ứng hover pop-up
 st.markdown("""
 <style>
+    /* Plotly text global styling */
+    .js-plotly-plot .plotly text {
+        font-weight: bold !important;
+        font-style: italic !important;
+    }
     /* Nền ứng dụng tự động theo Light/Dark/Custom theme, phủ thêm lớp gradient tím trong trẻo hơn */
     [data-testid="stAppViewContainer"], .stApp {
         background-color: var(--background-color);
@@ -769,6 +774,7 @@ if st.session_state.get("report_ticker"):
                             title=dict(text=label, font=dict(size=14, color="#e2e8f0")),
                             paper_bgcolor="rgba(0,0,0,0)",
                             plot_bgcolor="rgba(0,0,0,0)",
+                            hovermode="x unified",
                             xaxis=dict(type="category", showgrid=False, title=""),
                             yaxis=dict(title="Tỷ đồng", showgrid=True, gridcolor="rgba(255,255,255,0.1)"),
                             yaxis2=dict(
