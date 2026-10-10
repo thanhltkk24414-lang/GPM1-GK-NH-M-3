@@ -29,15 +29,16 @@ body { background: #fff; }
 .page { position: static; min-height: 0; page-break-after: auto; }
 .report-header, .stock-intro, .top-grid, .summary-box, .valuation-section,
 .two-columns, .analyst-line, .disclaimer { break-inside: avoid; }
-.report-header { display: grid; grid-template-columns: 1.05fr 1.45fr .82fr; min-height: 32mm; background: #102b40; color: #fff; border-radius: 2px; overflow: hidden; }
-.brand-block { padding: 4mm 3mm; border-right: 1px solid #536d80; display: flex; flex-direction: column; justify-content: center; }
-.brand-mark { display: inline-block; align-self: flex-start; border: 1px solid #e7bd62; color: #fff; padding: 1mm 2mm; font: bold 16pt Georgia, serif; margin-bottom: 2mm; }
+.report-header { width: 100%; table-layout: fixed; border-collapse: collapse; height: 32mm; background: #102b40; color: #fff; }
+.report-header td { vertical-align: middle; }
+.brand-block { width: 30%; padding: 4mm 3mm; border-right: 1px solid #536d80; }
+.brand-mark { display: inline-block; border: 1px solid #e7bd62; color: #fff; padding: 1mm 2mm; font: bold 16pt Georgia, serif; margin-bottom: 2mm; }
 .brand-caption { font-size: 6.5pt; line-height: 1.4; color: #c9d9e6; }
-.report-title { padding: 4mm 4mm; display: flex; flex-direction: column; justify-content: center; }
+.report-title { width: 42%; padding: 4mm; }
 .eyebrow { font-size: 6.5pt; letter-spacing: .45px; color: #c9d9e6; }
 .report-title h1 { font-size: 13pt; line-height: 1.25; margin: 1.5mm 0; color: #fff; }
 .report-title p { font-size: 7pt; margin: 0; color: #dbe5ed; }
-.recommendation { background: #13764f; text-align: center; padding: 3mm 2mm; display: flex; flex-direction: column; justify-content: center; color: #fff; }
+.recommendation { width: 28%; background: #13764f; text-align: center; padding: 3mm 2mm; color: #fff; }
 .recommendation .eyebrow { color: #d8f1e6; }
 .recommendation-value { font-size: 19pt; font-weight: 800; line-height: 1.2; margin: 1mm 0; }
 .recommendation strong { font-size: 11pt; margin-top: .5mm; }
@@ -96,6 +97,7 @@ body { background: #fff; }
 .score-section { margin: 3mm 0; }
 .score-section .source-note { line-height: 1.4; }
 .score-section .metric-table { margin-top: 2mm; }
+.financial-section > .source-note { padding-top: 2mm; }
 .valuation-table th { text-align: left; color: #63778a; padding: 1.5mm 1mm; border-bottom: 1px solid #d8e1e8; }
 .valuation-table td { padding: 1.5mm 1mm; }
 .target-price-row td { background: #eaf4fb; border-top: 1px solid #8eb8d4; color: #12334b !important; font-weight: bold; }

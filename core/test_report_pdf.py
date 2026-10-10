@@ -51,7 +51,8 @@ class GeneratePdfTests(unittest.TestCase):
             self.assertTrue(output_path.read_bytes().startswith(b"%PDF-"))
             self.assertEqual(len(html_sources), 1)
             self.assertNotIn("data:image/svg+xml;base64", html_sources[0])
-            self.assertEqual(html_sources[0].count("data:image/png;base64"), 2)
+            self.assertEqual(html_sources[0].count("data:image/png;base64"), 1)
+            self.assertIn('<table class="report-header">', html_sources[0])
             import pymupdf
 
             document = pymupdf.open(output_path)
@@ -60,7 +61,7 @@ class GeneratePdfTests(unittest.TestCase):
                 for page in document
                 for image in page.get_image_info()
             ]
-            self.assertEqual(len(image_pixmaps), 2)
+            self.assertEqual(len(image_pixmaps), 1)
             self.assertTrue(
                 all(
                     pixmap.width > 0
