@@ -769,6 +769,7 @@ if st.session_state.get("report_ticker"):
                             title=dict(text=label, font=dict(size=14)),
                             paper_bgcolor="rgba(0,0,0,0)",
                             plot_bgcolor="rgba(0,0,0,0)",
+                            xaxis=dict(type="category"),
                             yaxis=dict(title="Tỷ đồng"),
                             yaxis2=dict(
                                 title="YoY (%)",
