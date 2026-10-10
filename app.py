@@ -723,8 +723,9 @@ if st.session_state.get("report_ticker"):
                         amounts = chart_data.get(amount_key, {})
                         yoy_values = chart_data.get(yoy_key, {})
                         financial_fig = go.Figure()
+                        display_years = [f"Năm {y}" for y in chart_years]
                         financial_fig.add_bar(
-                            x=chart_years,
+                            x=display_years,
                             y=[amounts.get(year) for year in chart_years],
                             name=amount_label,
                             text=[
@@ -740,7 +741,7 @@ if st.session_state.get("report_ticker"):
                             1,
                         ) * 1.25
                         financial_fig.add_scatter(
-                            x=chart_years,
+                            x=display_years,
                             y=yoy_series,
                             name="Tăng trưởng YoY",
                             mode="lines+markers+text",
