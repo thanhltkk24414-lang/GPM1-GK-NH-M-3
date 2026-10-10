@@ -731,12 +731,6 @@ if st.session_state.get("report_ticker"):
                             x=display_years,
                             y=[amounts.get(year) for year in chart_years],
                             name=amount_label,
-                            text=[
-                                f"<b>{amounts[year]:,.1f}</b>" if amounts.get(year) is not None else ""
-                                for year in chart_years
-                            ],
-                            textposition="outside",
-                            textfont=dict(color="#e2e8f0", size=14),
                             marker=dict(
                                 color="rgba(59, 130, 246, 0.85)",
                                 line=dict(color="#2563eb", width=1.5)
@@ -752,13 +746,7 @@ if st.session_state.get("report_ticker"):
                             x=display_years,
                             y=yoy_series,
                             name="Tăng trưởng YoY",
-                            mode="lines+markers+text",
-                            text=[
-                                f"<b>{value:+.1f}%</b>" if value is not None else ""
-                                for value in yoy_series
-                            ],
-                            textposition="bottom right",
-                            textfont=dict(color="#fcd34d", size=14),
+                            mode="lines+markers",
                             connectgaps=False,
                             yaxis="y2",
                             line=dict(color="#f59e0b", width=3.5),
@@ -777,7 +765,7 @@ if st.session_state.get("report_ticker"):
                         financial_fig.update_layout(
                             template="plotly_dark",
                             height=380,
-                            margin=dict(l=30, r=30, t=30, b=30),
+                            margin=dict(l=30, r=30, t=50, b=30),
                             title=dict(text=label, font=dict(size=14, color="#e2e8f0")),
                             paper_bgcolor="rgba(0,0,0,0)",
                             plot_bgcolor="rgba(0,0,0,0)",
@@ -790,7 +778,7 @@ if st.session_state.get("report_ticker"):
                                 range=[-yoy_bound, yoy_bound],
                                 showgrid=False,
                             ),
-                            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),
                         )
                         with col:
                             st.plotly_chart(
