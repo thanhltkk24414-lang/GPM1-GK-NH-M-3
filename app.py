@@ -82,6 +82,8 @@ st.markdown("""
     [data-testid="stMetric"], .summary-box, .welcome-box, .image-box {
         background-color: var(--secondary-background-color) !important;
         background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0%, rgba(0, 0, 0, 0.05) 100%) !important;
+        backdrop-filter: blur(10px) !important;
+        -webkit-backdrop-filter: blur(10px) !important;
         border-radius: 12px !important;
         padding: 20px !important;
         box-shadow: 0 8px 20px rgba(0,0,0,0.15) !important;
@@ -232,6 +234,7 @@ st.markdown("""
         overflow-wrap: anywhere;
         white-space: normal;
         line-height: 1.65;
+        font-weight: 700;
     }
 
     /* 4. Đổ bóng lấp lánh liên tục và hiệu ứng shine cho các hộp (Box) ở vùng nền */
@@ -426,7 +429,6 @@ if st.session_state.get("report_ticker"):
                     "mỗi cổ phiếu, không phải nghìn đồng."
                 ),
             )
-            st.caption(f"Nguồn giá: {report_data.get('price_source', 'Chưa có dữ liệu')}")
             missing_metadata = report_data.get("metadata_missing", [])
             if report_data.get("company_metadata_error"):
                 st.warning(report_data["company_metadata_error"])
@@ -436,16 +438,17 @@ if st.session_state.get("report_ticker"):
                     + ", ".join(missing_metadata)
                     + ". Dashboard không tự ước lượng các trường này."
                 )
-            elif report_data.get("company_metadata_as_of"):
-                st.caption(
-                    f"Hồ sơ doanh nghiệp lấy từ "
-                    f"{report_data.get('company_metadata_source', 'VNStock VCI')} · "
-                    f"{report_data['company_metadata_as_of']}"
-                )
             if report_data.get("quote_error"):
                 st.warning(
                     f"{report_data['quote_error']} "
                     "Đang hiển thị giá đóng cửa gần nhất thay thế."
+                )
+            st.caption(f"Nguồn giá: {report_data.get('price_source', 'Chưa có dữ liệu')}")
+            if report_data.get("company_metadata_as_of"):
+                st.caption(
+                    f"Hồ sơ doanh nghiệp lấy từ "
+                    f"{report_data.get('company_metadata_source', 'VNStock VCI')} · "
+                    f"{report_data['company_metadata_as_of']}"
                 )
 
             # --- 2. BIỂU ĐỒ GIÁ ---
@@ -530,7 +533,7 @@ if st.session_state.get("report_ticker"):
                     )
                     st.plotly_chart(
                         fig,
-                        width="stretch",
+                        use_container_width=True,
                         config={"scrollZoom": True, "displayModeBar": False},
                     )
                 else:
@@ -756,7 +759,7 @@ if st.session_state.get("report_ticker"):
                         )
                         if chart_years and yoy_series[0] is None:
                             financial_fig.add_annotation(
-                                x=chart_years[0],
+                                x=display_years[0],
                                 y=-yoy_bound * 0.82,
                                 yref="y2",
                                 text="N/A*",
