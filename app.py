@@ -104,11 +104,11 @@ st.markdown("""
         font-weight: 800 !important;
         text-shadow: 0 1px 2px rgba(0,0,0,0.1);
     }
-    [data-testid="stMetricLabel"] {
+    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p, [data-testid="stMetricLabel"] div, [data-testid="stMetricLabel"] span {
         color: #d69e2e !important; /* In vàng các nhãn metric */
-        opacity: 0.85;
-        font-size: 15px !important;
-        font-weight: 600 !important;
+        opacity: 1.0 !important;
+        font-size: 16px !important;
+        font-weight: 800 !important;
     }
 
     /* In vàng các thẻ <b> (tiêu đề nhỏ) trong hộp tóm tắt và phụ đề */
