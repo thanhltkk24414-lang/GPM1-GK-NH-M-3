@@ -611,8 +611,7 @@ if st.session_state.get("report_ticker"):
                         st.dataframe(
                             valuation_rows,
                             hide_index=True,
-                            width="stretch",
-                            alt="Các phương pháp định giá, tỷ trọng và giá mục tiêu tổng hợp",
+                            use_container_width=True,
                         )
                     group_labels = {
                         "technical": "Kỹ thuật",
@@ -632,8 +631,7 @@ if st.session_state.get("report_ticker"):
                         st.dataframe(
                             pd.DataFrame(group_rows),
                             hide_index=True,
-                            width="stretch",
-                            alt="Điểm, trọng số và đóng góp của từng nhóm phân tích",
+                            use_container_width=True,
                         )
                     bonus = score_breakdown.get("bonus", 0)
                     st.caption(
@@ -668,8 +666,7 @@ if st.session_state.get("report_ticker"):
                                     for factor in factors
                                 ],
                                 hide_index=True,
-                                width="stretch",
-                                alt=f"Chi tiết bằng chứng và quy tắc chấm điểm: {title}",
+                                use_container_width=True,
                             )
 
             col_points, col_risks = st.columns(2)
