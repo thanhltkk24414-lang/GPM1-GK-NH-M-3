@@ -40,8 +40,8 @@ def load_price_history(ticker, database_path=None):
     database_path = Path(database_path) if database_path else DEFAULT_DATABASE
     if not database_path.is_absolute():
         database_path = PROJECT_ROOT / database_path
-    if not database_path.is_file():
-        raise FileNotFoundError(f"Không tìm thấy cơ sở dữ liệu giá: {database_path}")
+    if not database_path.parent.exists():
+        database_path.parent.mkdir(parents=True, exist_ok=True)
 
     history_query = """
         SELECT
@@ -55,13 +55,18 @@ def load_price_history(ticker, database_path=None):
         FROM technical_indicators
         WHERE symbol = ?
     """
-    with closing(sqlite3.connect(database_path)) as connection:
-        history = pd.read_sql_query(
-            history_query, connection, params=(ticker.upper(),)
-        )
-        indicators = pd.read_sql_query(
-            indicators_query, connection, params=(ticker.upper(),)
-        )
+    history = pd.DataFrame()
+    indicators = pd.DataFrame()
+    try:
+        with closing(sqlite3.connect(database_path)) as connection:
+            history = pd.read_sql_query(
+                history_query, connection, params=(ticker.upper(),)
+            )
+            indicators = pd.read_sql_query(
+                indicators_query, connection, params=(ticker.upper(),)
+            )
+    except Exception:
+        pass
 
     if history.empty:
         # Nếu chưa có lịch sử, tự động tải

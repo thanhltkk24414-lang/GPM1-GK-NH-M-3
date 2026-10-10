@@ -6,3 +6,6 @@ data/raw/
 data/processed/
 reports/
 .env
+*.db
+*.pdf
+annual_reports/
