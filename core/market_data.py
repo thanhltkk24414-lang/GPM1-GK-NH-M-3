@@ -149,35 +149,56 @@ def load_price_history(ticker, database_path=None):
     return history.reset_index(drop=True)
 
 
-def load_symbol_metadata(ticker):
-    """Load exchange information from the existing project listing export."""
-    listing_path = PROJECT_ROOT / "data" / "symbols.csv"
-    if not listing_path.is_file():
+def load_symbol_metadata(ticker, listing_path=None):
+    """Load exchange information from the project's symbol listing CSV."""
+    if listing_path is None:
+        candidates = (
+            PROJECT_ROOT / "data" / "symbols.csv",
+            PROJECT_ROOT / "data" / "symbol.csv",
+            PROJECT_ROOT / "symbols.csv",
+            PROJECT_ROOT / "symbol.csv",
+        )
+        listing_path = next(
+            (path for path in candidates if path.is_file()), None
+        )
+    else:
+        listing_path = Path(listing_path)
+
+    if listing_path is None or not listing_path.is_file():
         return {}
 
     symbols = pd.read_csv(listing_path, encoding="utf-8-sig")
-    required_columns = {"symbol", "exchange"}
-    missing_columns = required_columns.difference(symbols.columns)
+    columns = {
+        str(column).strip().casefold(): column
+        for column in symbols.columns
+    }
+    missing_columns = {"symbol", "exchange"}.difference(columns)
     if missing_columns:
         raise ValueError(
-            f"Danh sách mã thiếu cột: {', '.join(sorted(missing_columns))}"
+            f"Danh sách mã {listing_path} thiếu cột: "
+            f"{', '.join(sorted(missing_columns))}."
         )
 
+    symbol_column = columns["symbol"]
+    exchange_column = columns["exchange"]
     matches = symbols.loc[
-        symbols["symbol"].astype("string").str.strip().str.upper().eq(
+        symbols[symbol_column].astype("string").str.strip().str.upper().eq(
             str(ticker).strip().upper()
         )
     ]
     if matches.empty:
         return {}
 
-    row = matches.iloc[0]
-    exchange = row.get("exchange")
+    exchange = matches.iloc[0][exchange_column]
+    try:
+        source = str(listing_path.relative_to(PROJECT_ROOT))
+    except ValueError:
+        source = str(listing_path)
     return {
         "exchange": str(exchange).strip()
         if pd.notna(exchange) and str(exchange).strip()
         else None,
-        "source": "data/symbols.csv",
+        "source": source,
     }
 
 
@@ -250,7 +271,11 @@ def _cached_quote(ticker, database_path):
         "ask": row[3],
         "data_type": row[4] or "market_data",
         "timestamp": timestamp.isoformat(timespec="seconds"),
-        "source": "market_data.db",
+        "source": {
+            "match_price": "Vietcap WebSocket",
+            "dnse_latest_trade": "DNSE realtime",
+            "snapshot": "Vietcap priceboard snapshot",
+        }.get(row[4], "market_data.db"),
     }
 
 
