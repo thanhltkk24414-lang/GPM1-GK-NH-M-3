@@ -775,7 +775,7 @@ if st.session_state.get("report_ticker"):
                             paper_bgcolor="rgba(0,0,0,0)",
                             plot_bgcolor="rgba(0,0,0,0)",
                             hovermode="x unified",
-                            xaxis=dict(type="category", showgrid=False, title=""),
+                            xaxis=dict(type="category", showgrid=False, title="", showspikes=False),
                             yaxis=dict(title="Tỷ đồng", showgrid=True, gridcolor="rgba(255,255,255,0.1)"),
                             yaxis2=dict(
                                 title="YoY (%)",
