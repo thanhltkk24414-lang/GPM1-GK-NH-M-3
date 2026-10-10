@@ -1,5 +1,6 @@
 import html
 import os
+import traceback
 
 import streamlit as st
 import pandas as pd
@@ -12,6 +13,13 @@ from core.report_pdf import (
 
 # Cấu hình trang với giao diện rộng
 st.set_page_config(page_title="Hệ Thống Phân Tích Cổ Phiếu", layout="wide", initial_sidebar_state="collapsed")
+
+
+@st.cache_resource
+def _start_realtime_pipeline():
+    from stock_bot.data_pipeline.main import start_realtime_pipeline
+
+    return start_realtime_pipeline()
 
 
 @st.fragment(run_every="120s")
@@ -50,12 +58,13 @@ def _refresh_report_quote(ticker):
     if refreshed.get("quote_error"):
         st.warning(
             f"{refreshed['quote_error']} "
-            "Đang hiển thị giá đóng cửa gần nhất."
+            "Không dùng giá lịch sử để thay thế giá realtime trong phiên."
         )
     else:
         if refreshed.get("quote_is_realtime"):
             st.caption(
-                f"Giá realtime và khuyến nghị tự làm mới mỗi 2 phút · "
+                f"Đang dùng {refreshed.get('price_source', 'giá realtime')} · "
+                "Dashboard tự kiểm tra dữ liệu mỗi 2 phút · "
                 f"Cập nhật: {refreshed.get('data_as_of', 'N/A')}"
             )
         else:
@@ -350,6 +359,14 @@ if st.session_state.get("report_ticker"):
     ticker = st.session_state["report_ticker"]
     with st.spinner(f"Hệ thống đang xử lý dữ liệu cho {ticker}..."):
         try:
+            try:
+                _start_realtime_pipeline()
+            except Exception as exc:
+                st.warning(
+                    f"Không khởi động được realtime pipeline: {exc} "
+                    "Dashboard vẫn tiếp tục bằng dữ liệu hiện có."
+                )
+
             if analyze_btn or "report_data" not in st.session_state:
                 # 1. Tải dữ liệu báo cáo trước để biết năm tài chính mới nhất
                 report_data = load_stock_report_data(ticker)
@@ -387,6 +404,12 @@ if st.session_state.get("report_ticker"):
                 f"<b>{hoverify('Ngày Dữ Liệu:')}</b> {hoverify(report_data.get('data_as_of', 'N/A'))}"
             )
             st.markdown(f'<div class="sub-title">{sub_info}</div>', unsafe_allow_html=True)
+            if report_data.get("exchange") == "Chưa có dữ liệu":
+                st.warning(
+                    "Chưa tìm thấy sàn cho mã này. Đặt danh sách mã tại "
+                    "data\\symbols.csv hoặc data\\symbol.csv với các cột "
+                    "`symbol` và `exchange`, rồi tra cứu lại mã."
+                )
             
             # --- TẠO VÀ TẢI BÁO CÁO PDF (ĐƯA LÊN ĐẦU) ---
             pdf_path = f"outputs/{ticker}_report.pdf"
@@ -395,21 +418,40 @@ if st.session_state.get("report_ticker"):
             pdf_data = report_data.copy()
             pdf_data.pop("price_history", None)
             pdf_data.pop("_scoring_data", None)
-            generate_pdf(pdf_data, output_path=pdf_path)
-            
-            with open(pdf_path, "rb") as f:
-                pdf_bytes = f.read()
+            pdf_bytes = None
+            try:
+                generate_pdf(pdf_data, output_path=pdf_path)
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+            except (
+                AttributeError,
+                ImportError,
+                OSError,
+                RuntimeError,
+                ZeroDivisionError,
+            ) as exc:
+                st.warning(
+                    f"Không tạo được báo cáo PDF: {exc} "
+                    "Các dữ liệu và biểu đồ trên dashboard vẫn được hiển thị."
+                )
 
             col_dl1, col_dl2 = st.columns(2)
             with col_dl1:
-                st.download_button(
-                    label="📥 TẢI XUỐNG BÁO CÁO PHÂN TÍCH (PDF)",
-                    data=pdf_bytes,
-                    file_name=f"Bao_Cao_Phan_Tich_{ticker}.pdf",
-                    mime="application/pdf",
-                    type="primary",
-                    use_container_width=True
-                )
+                if pdf_bytes is not None:
+                    st.download_button(
+                        label="📥 TẢI XUỐNG BÁO CÁO PHÂN TÍCH (PDF)",
+                        data=pdf_bytes,
+                        file_name=f"Bao_Cao_Phan_Tich_{ticker}.pdf",
+                        mime="application/pdf",
+                        type="primary",
+                        use_container_width=True
+                    )
+                else:
+                    st.button(
+                        "PDF hiện không khả dụng",
+                        disabled=True,
+                        use_container_width=True,
+                    )
             
             bctn_path = None
             bctn_year = report_data.get("financial_years", [])[-1] if report_data.get("financial_years") else 2023
@@ -523,7 +565,7 @@ if st.session_state.get("report_ticker"):
             if report_data.get("quote_error"):
                 st.warning(
                     f"{report_data['quote_error']} "
-                    "Đang hiển thị giá đóng cửa gần nhất thay thế."
+                    "Không dùng giá lịch sử để thay thế giá realtime trong phiên."
                 )
             st.caption(f"Nguồn giá: {report_data.get('price_source', 'Chưa có dữ liệu')}")
             if report_data.get("company_metadata_as_of"):
@@ -910,6 +952,8 @@ if st.session_state.get("report_ticker"):
 
         except Exception as e:
             st.error(f"Đã xảy ra lỗi: {e}")
+            st.code(traceback.format_exc(), language="python")
+            print(traceback.format_exc())
 elif analyze_btn and not ticker_input:
     st.warning("Vui lòng nhập mã cổ phiếu!")
 else:

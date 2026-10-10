@@ -2,13 +2,20 @@
 import argparse
 import base64
 import html
+from io import BytesIO
 import json
+import math
+import os
+import re
 from datetime import date, datetime
 from pathlib import Path
+import tempfile
 from urllib.parse import unquote, urlparse
+import xml.etree.ElementTree as ET
 
 import jinja2
 import pandas as pd
+from PIL import Image, ImageDraw, ImageFont
 
 if __package__:
     from .financial_alignment import normalize_statement_year_order
@@ -1142,6 +1149,8 @@ def load_stock_report_data(
     quote_price = quote.get("price") if quote else None
     quote_price = _score_value(quote_price)
     close = quote_price if quote_price is not None else float(latest["close"])
+    waiting_for_realtime = market_open and quote is None
+    current_price = "Chờ realtime" if waiting_for_realtime else _format_price(close)
     quote_timestamp = quote.get("timestamp") if quote else None
     if quote_timestamp:
         try:
@@ -1154,6 +1163,21 @@ def load_stock_report_data(
         quote_date = None
 
     quote_source = quote.get("source") if quote else None
+    if quote:
+        price_source = (
+            f"{quote_source} lúc {quote_date}; "
+            "đơn vị quy đổi sang đồng/cổ phiếu"
+        )
+    elif waiting_for_realtime:
+        price_source = (
+            "Đang trong giờ giao dịch nhưng chưa có quote realtime; "
+            "không hiển thị giá lịch sử thay thế, đơn vị đồng/cổ phiếu"
+        )
+    else:
+        price_source = (
+            f"Giá đóng cửa lịch sử {latest_date:%d/%m/%Y}; "
+            "ngoài giờ giao dịch, đơn vị đồng/cổ phiếu"
+        )
     sources = [price_history_source]
     if quote_source:
         sources.append(f"{quote_source} ({quote_date})")
@@ -1189,21 +1213,27 @@ def load_stock_report_data(
         company_market_cap is None
         and company_metadata.get("shares_outstanding") is not None
         and close > 0
+        and not waiting_for_realtime
     ):
         company_market_cap = close * 1000 * float(
             company_metadata["shares_outstanding"]
         )
         market_cap_is_estimated = True
 
-    technical_points = [
-        (
+    if quote:
+        technical_points = [
             f"Giá realtime: {_format_price(close)}/cổ phiếu "
             f"(cập nhật {quote_date})."
-            if quote
-            else f"Giá đóng cửa ngày {latest_date:%d/%m/%Y}: "
-            f"{_format_price(close)}/cổ phiếu (dự phòng, không phải realtime)."
-        )
-    ]
+        ]
+    elif waiting_for_realtime:
+        technical_points = [
+            "Chưa nhận được giá realtime; không dùng giá lịch sử thay cho giá hiện tại."
+        ]
+    else:
+        technical_points = [
+            f"Giá đóng cửa ngày {latest_date:%d/%m/%Y}: "
+            f"{_format_price(close)}/cổ phiếu."
+        ]
     for column, label in (("MA20", "MA20"), ("MA50", "MA50"), ("RSI14", "RSI 14")):
         value = pd.to_numeric(latest.get(column), errors="coerce")
         formatted = _format_indicator(value)
@@ -1212,7 +1242,13 @@ def load_stock_report_data(
     moving_average = pd.to_numeric(latest.get("MA20"), errors="coerce")
     if pd.notna(moving_average):
         relation = "trên" if close >= moving_average else "dưới"
-        price_label = "Giá hiện tại" if quote else "Giá đóng cửa"
+        price_label = (
+            "Giá hiện tại"
+            if quote
+            else "Giá lịch sử gần nhất"
+            if waiting_for_realtime
+            else "Giá đóng cửa"
+        )
         technical_points.append(f"{price_label} đang {relation} MA20.")
 
     prior_volumes = history.loc[
@@ -1247,15 +1283,10 @@ def load_stock_report_data(
         "exchange": exchange,
         "industry": _industry_in_vietnamese(company_metadata.get("industry"))
         or "Chưa có dữ liệu",
-        "current_price": _format_price(close),
+        "current_price": current_price,
         "investment_horizon": "12 tháng",
         "price_chart": _price_chart_data_uri(history, ticker, close if quote else None),
-        "price_source": (
-            f"{quote_source} lúc {quote_date}; đơn vị quy đổi sang đồng/cổ phiếu"
-            if quote
-            else f"Giá đóng cửa lịch sử {latest_date:%d/%m/%Y}; "
-            "không có báo giá realtime, đơn vị đồng/cổ phiếu"
-        ),
+        "price_source": price_source,
         "market_cap": (
             (
                 f"{company_market_cap / 1_000_000_000:,.2f} tỷ đồng"
@@ -1311,7 +1342,7 @@ def load_stock_report_data(
         "company_metadata_as_of": company_metadata.get("fetched_at"),
         "company_metadata_error": company_metadata_error,
         "technical_metrics": [
-            {"label": "Giá gần nhất", "value": _format_price(close)},
+            {"label": "Giá gần nhất", "value": current_price},
             {"label": "MA20", "value": _format_price(latest.get("MA20"))},
             {"label": "MA50", "value": _format_price(latest.get("MA50"))},
             {"label": "RSI 14", "value": _format_indicator(latest.get("RSI14")) or "N/A"},
@@ -1356,7 +1387,7 @@ def load_stock_report_data(
         "price_history": history,
         "investment_thesis": (
             "Báo cáo sử dụng OHLCV và chỉ báo kỹ thuật từ database thị trường; "
-            "giá realtime được lấy riêng từ snapshot Vietcap khi khả dụng. "
+            "giá realtime được đọc từ cache WebSocket/snapshot khi khả dụng. "
             + (
                 f"Số liệu cơ bản lấy từ {financial_source}; "
                 "các năm báo cáo theo đúng cột năm nguồn."
@@ -1377,7 +1408,10 @@ def load_stock_report_data(
         "analyst_name": "Tổng hợp dữ liệu cổ phiếu",
         "analyst_contact": "",
         "data_sources": "; ".join(sources),
-        "data_as_of": quote_date or latest_date.strftime("%d/%m/%Y"),
+        "data_as_of": (
+            quote_date
+            or ("Chờ realtime" if waiting_for_realtime else latest_date.strftime("%d/%m/%Y"))
+        ),
     }
     report_data = _apply_company_metadata(report_data, company_metadata)
     score_tech = {
@@ -1519,6 +1553,7 @@ def refresh_stock_report_quote(report_data, database_path=None):
     if quote is None and quote_error is None and market_open:
         quote_error = f"Không tìm thấy báo giá realtime cho mã {ticker}."
 
+    waiting_for_realtime = market_open and quote is None
     if quote is not None:
         close = _score_value(quote.get("price"))
         quote_timestamp = quote.get("timestamp")
@@ -1539,14 +1574,22 @@ def refresh_stock_report_quote(report_data, database_path=None):
         quote_date = None
         quote_source = None
         price_source = (
-            f"Giá đóng cửa lịch sử {latest_date:%d/%m/%Y}; "
-            "không có báo giá realtime, đơn vị đồng/cổ phiếu"
+            "Đang trong giờ giao dịch nhưng chưa có quote realtime; "
+            "không hiển thị giá lịch sử thay thế, đơn vị đồng/cổ phiếu"
+            if waiting_for_realtime
+            else f"Giá đóng cửa lịch sử {latest_date:%d/%m/%Y}; "
+            "ngoài giờ giao dịch, đơn vị đồng/cổ phiếu"
         )
 
     refreshed = dict(report_data)
-    refreshed["current_price"] = _format_price(close)
+    refreshed["current_price"] = (
+        "Chờ realtime" if waiting_for_realtime else _format_price(close)
+    )
     refreshed["price_source"] = price_source
-    refreshed["data_as_of"] = quote_date or latest_date.strftime("%d/%m/%Y")
+    refreshed["data_as_of"] = (
+        quote_date
+        or ("Chờ realtime" if waiting_for_realtime else latest_date.strftime("%d/%m/%Y"))
+    )
     refreshed["quote_error"] = quote_error
     refreshed["quote_is_realtime"] = quote is not None
     refreshed["technical_as_of"] = latest_date.strftime("%d/%m/%Y")
@@ -1556,7 +1599,7 @@ def refresh_stock_report_quote(report_data, database_path=None):
     refreshed["technical_metrics"] = [
         {
             "label": metric["label"],
-            "value": _format_price(close) if metric["label"] == "Giá gần nhất"
+            "value": refreshed["current_price"] if metric["label"] == "Giá gần nhất"
             else metric["value"],
         }
         for metric in report_data.get("technical_metrics", [])
@@ -1653,6 +1696,237 @@ def apply_scoring_to_report(report_data, analysis_data, use_ai=False):
     return report
 
 
+def _rasterize_svg_data_uri(data_uri, core_dir):
+    match = re.fullmatch(
+        r"data:image/svg\+xml;base64,([A-Za-z0-9+/=]+)",
+        data_uri.strip(),
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        raise ValueError("Biểu đồ không có định dạng SVG base64 hợp lệ.")
+
+    try:
+        svg = base64.b64decode(match.group(1), validate=True).decode("utf-8")
+        root = ET.fromstring(svg)
+    except (UnicodeDecodeError, ET.ParseError, ValueError) as exc:
+        raise ValueError(f"Không đọc được biểu đồ SVG: {exc}") from exc
+
+    view_box = root.attrib.get("viewBox", "").replace(",", " ").split()
+    if len(view_box) != 4:
+        raise ValueError("Biểu đồ SVG thiếu viewBox hợp lệ.")
+    try:
+        view_x, view_y, view_width, view_height = map(float, view_box)
+    except ValueError as exc:
+        raise ValueError("Kích thước viewBox của biểu đồ không hợp lệ.") from exc
+    if view_width <= 0 or view_height <= 0:
+        raise ValueError("Kích thước biểu đồ SVG phải lớn hơn 0.")
+
+    scale = 2
+    image = Image.new(
+        "RGB",
+        (round(view_width * scale), round(view_height * scale)),
+        "white",
+    )
+    draw = ImageDraw.Draw(image)
+    font_path = core_dir.parent / "assets" / "fonts" / "arial.ttf"
+    bold_font_path = core_dir.parent / "assets" / "fonts" / "arialbd.ttf"
+
+    def point(value):
+        return (
+            round((float(value[0]) - view_x) * scale),
+            round((float(value[1]) - view_y) * scale),
+        )
+
+    def dimension(value, reference):
+        value = str(value)
+        if value.endswith("%"):
+            return round(float(value[:-1]) * reference / 100)
+        return round(float(value) * scale)
+
+    def color(value, default=None):
+        if not value or value == "none":
+            return default
+        if re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+            return value
+        if re.fullmatch(r"#[0-9a-fA-F]{3}", value):
+            return value
+        return default
+
+    def dashed_line(points, fill, width, dash_pattern):
+        if not dash_pattern:
+            draw.line(points, fill=fill, width=width)
+            return
+        dash_values = [
+            max(1, round(float(value) * scale))
+            for value in re.findall(r"\d+(?:\.\d+)?", dash_pattern)
+        ]
+        if not dash_values:
+            draw.line(points, fill=fill, width=width)
+            return
+        pattern_index = 0
+        remaining = dash_values[0]
+        draw_segment = True
+        for start, end in zip(points, points[1:]):
+            dx = end[0] - start[0]
+            dy = end[1] - start[1]
+            length = math.hypot(dx, dy)
+            if length == 0:
+                continue
+            position = 0.0
+            while position < length:
+                segment_length = min(remaining, length - position)
+                if draw_segment:
+                    start_ratio = position / length
+                    end_ratio = (position + segment_length) / length
+                    draw.line(
+                        (
+                            (
+                                round(start[0] + dx * start_ratio),
+                                round(start[1] + dy * start_ratio),
+                            ),
+                            (
+                                round(start[0] + dx * end_ratio),
+                                round(start[1] + dy * end_ratio),
+                            ),
+                        ),
+                        fill=fill,
+                        width=width,
+                    )
+                position += segment_length
+                remaining -= segment_length
+                if remaining <= 0:
+                    pattern_index = (pattern_index + 1) % len(dash_values)
+                    remaining = dash_values[pattern_index]
+                    draw_segment = not draw_segment
+
+    for element in root.iter():
+        tag = element.tag.rsplit("}", 1)[-1]
+        attributes = element.attrib
+        fill = color(attributes.get("fill"), "black")
+        stroke = color(attributes.get("stroke"))
+        stroke_width = max(
+            1, round(float(attributes.get("stroke-width", 1)) * scale)
+        )
+        dash_pattern = attributes.get("stroke-dasharray")
+
+        if tag == "rect":
+            x, y = point(
+                (attributes.get("x", 0), attributes.get("y", 0))
+            )
+            width = dimension(attributes.get("width", 0), view_width)
+            height = dimension(attributes.get("height", 0), view_height)
+            if width < 1 or height < 1:
+                continue
+            draw.rectangle(
+                (x, y, x + width, y + height),
+                fill=fill if attributes.get("fill") != "none" else None,
+                outline=stroke,
+                width=stroke_width if stroke else 1,
+            )
+        elif tag == "line":
+            start = point((attributes.get("x1", 0), attributes.get("y1", 0)))
+            end = point((attributes.get("x2", 0), attributes.get("y2", 0)))
+            if stroke:
+                dashed_line([start, end], stroke, stroke_width, dash_pattern)
+        elif tag == "circle":
+            center_x, center_y = point(
+                (attributes.get("cx", 0), attributes.get("cy", 0))
+            )
+            radius = max(1, round(float(attributes.get("r", 0)) * scale))
+            draw.ellipse(
+                (
+                    center_x - radius,
+                    center_y - radius,
+                    center_x + radius,
+                    center_y + radius,
+                ),
+                fill=fill if attributes.get("fill") != "none" else None,
+                outline=stroke,
+                width=stroke_width,
+            )
+        elif tag == "path":
+            tokens = re.findall(
+                r"[ML]|[-+]?(?:\d*\.)?\d+(?:[eE][-+]?\d+)?",
+                attributes.get("d", ""),
+            )
+            values = []
+            command = None
+            for token in tokens:
+                if token in {"M", "L"}:
+                    command = token
+                elif command:
+                    values.append(float(token))
+            points = [
+                point((values[index], values[index + 1]))
+                for index in range(0, len(values) - 1, 2)
+            ]
+            if stroke and len(points) > 1:
+                dashed_line(points, stroke, stroke_width, dash_pattern)
+        elif tag == "text":
+            text = "".join(element.itertext())
+            if not text:
+                continue
+            font_size = max(
+                1, round(float(attributes.get("font-size", 10)) * scale)
+            )
+            font_file = (
+                bold_font_path
+                if attributes.get("font-weight", "").lower() in {"bold", "700", "800"}
+                else font_path
+            )
+            try:
+                font = ImageFont.truetype(str(font_file), font_size)
+            except OSError:
+                font = ImageFont.load_default(size=font_size)
+            x, y = point((attributes.get("x", 0), attributes.get("y", 0)))
+            anchor = (
+                "ms"
+                if attributes.get("text-anchor") == "middle"
+                else "rs"
+                if attributes.get("text-anchor") == "end"
+                else "ls"
+            )
+            rotation = re.search(
+                r"rotate\(\s*([-+]?\d+(?:\.\d+)?)"
+                r"(?:[\s,]+([-+]?\d+(?:\.\d+)?)[\s,]+"
+                r"([-+]?\d+(?:\.\d+)?))?\s*\)",
+                attributes.get("transform", ""),
+            )
+            if rotation:
+                angle = float(rotation.group(1))
+                pivot = point(
+                    (
+                        rotation.group(2) or attributes.get("x", 0),
+                        rotation.group(3) or attributes.get("y", 0),
+                    )
+                )
+                text_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
+                layer_draw = ImageDraw.Draw(text_layer)
+                layer_draw.text(
+                    (x, y), text, fill=fill, font=font, anchor=anchor
+                )
+                text_layer = text_layer.rotate(
+                    -angle,
+                    resample=Image.Resampling.BICUBIC,
+                    center=pivot,
+                )
+                image.paste(text_layer, (0, 0), text_layer)
+                draw = ImageDraw.Draw(image)
+            else:
+                draw.text(
+                    (x, y),
+                    text,
+                    fill=fill,
+                    font=font,
+                    anchor=anchor,
+                )
+
+    png = BytesIO()
+    image.save(png, format="PNG", optimize=True)
+    encoded = base64.b64encode(png.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
 def generate_pdf(data_dict, output_path="outputs/stock_report.pdf"):
     """
     Hàm xuất file PDF báo cáo phân tích cổ phiếu từ Jinja2 HTML/CSS Template.
@@ -1665,60 +1939,139 @@ def generate_pdf(data_dict, output_path="outputs/stock_report.pdf"):
     if not output_path.is_absolute():
         output_path = project_root / output_path
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        dir=output_path.parent, suffix=".pdf", delete=False
+    ) as temporary_file:
+        temporary_output = Path(temporary_file.name)
 
-    # 1. Nạp HTML Template từ thư mục core/
-    env = jinja2.Environment(
-        loader=jinja2.FileSystemLoader(str(core_dir)),
-        autoescape=jinja2.select_autoescape(["html", "xml"]),
-    )
-    template = env.get_template('report_template.html')
-
-    # 2. Render dữ liệu vào Template HTML
-    rendered_html = template.render(**data_dict)
-    # 3. Tiến hành xuất PDF
     try:
-        # Ưu tiên WeasyPrint (Chạy chuẩn trên Linux / Streamlit Cloud)
-        from weasyprint import HTML, CSS
-        css_path = core_dir / "report_style.css"
-        stylesheets = [CSS(css_path)] if css_path.exists() else []
-        stylesheets.append(
-            CSS(
-                string=".page-footer .page-number { display: none; }",
-                base_url=str(core_dir),
-            )
+        # 1. Nạp HTML Template từ thư mục core/
+        env = jinja2.Environment(
+            loader=jinja2.FileSystemLoader(str(core_dir)),
+            autoescape=jinja2.select_autoescape(["html", "xml"]),
         )
-        HTML(string=rendered_html, base_url=str(core_dir)).write_pdf(
-            str(output_path),
-            stylesheets=stylesheets,
-        )
-        print("-> PDF exported successfully with WeasyPrint.")
+        template = env.get_template('report_template.html')
 
-    except (ImportError, OSError):
-        # Fallback xhtml2pdf dành riêng cho Windows khi thiếu GTK3
-        from xhtml2pdf import pisa
-
-        def resolve_resource(uri, _):
-            parsed_uri = urlparse(uri)
-            if parsed_uri.scheme:
-                return uri
-            resource_path = Path(unquote(parsed_uri.path))
-            if not resource_path.is_absolute():
-                resource_path = core_dir / resource_path
-            return str(resource_path.resolve())
-
-        with output_path.open("wb") as pdf_file:
-            result = pisa.CreatePDF(
-                src=rendered_html,
-                dest=pdf_file,
-                encoding='utf-8',
-                path=str(core_dir),
-                link_callback=resolve_resource
+        # 2. Render dữ liệu vào Template HTML
+        rendered_html = template.render(**data_dict)
+        # 3. Tiến hành xuất PDF
+        try:
+            # Ưu tiên WeasyPrint (Chạy chuẩn trên Linux / Streamlit Cloud)
+            from weasyprint import HTML, CSS
+            css_path = core_dir / "report_style.css"
+            stylesheets = [CSS(css_path)] if css_path.exists() else []
+            stylesheets.append(
+                CSS(
+                    string=".page-footer .page-number { display: none; }",
+                    base_url=str(core_dir),
+                )
             )
-        if result.err:
-            raise RuntimeError(f"xhtml2pdf không thể tạo báo cáo PDF ({result.err} lỗi).")
-        print("-> PDF exported successfully with xhtml2pdf.")
+            HTML(string=rendered_html, base_url=str(core_dir)).write_pdf(
+                str(temporary_output),
+                stylesheets=stylesheets,
+            )
+            print("-> PDF exported successfully with WeasyPrint.")
 
-    return str(output_path)
+        except (ImportError, OSError):
+            # Fallback xhtml2pdf dành riêng cho Windows khi thiếu GTK3
+            from xhtml2pdf import pisa
+
+            def rasterize_chart(match):
+                image_tag = match.group(0)
+                source_match = re.search(
+                    r"\bsrc=[\"'](data:image/svg\+xml;base64,[^\"']+)[\"']",
+                    image_tag,
+                    flags=re.IGNORECASE,
+                )
+                if source_match is None:
+                    return image_tag
+                png_uri = _rasterize_svg_data_uri(source_match.group(1), core_dir)
+                return image_tag[:source_match.start(1)] + png_uri + image_tag[source_match.end(1):]
+
+            fallback_html = re.sub(
+                r"<img\b[^>]*>",
+                rasterize_chart,
+                rendered_html,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            css_path = core_dir / "report_style.css"
+            if css_path.exists():
+                fallback_css = css_path.read_text(encoding="utf-8")
+                fallback_css = re.sub(
+                    r"display\s*:\s*(?:flex|grid)\s*;",
+                    "display: block;",
+                    fallback_css,
+                    flags=re.IGNORECASE,
+                )
+                fallback_css = re.sub(
+                    r"(?:break-inside|page-break-inside)\s*:\s*avoid\s*;",
+                    "",
+                    fallback_css,
+                    flags=re.IGNORECASE,
+                )
+                fallback_css += """
+                    .chart-frame { height: auto; }
+                    .chart-frame img { display: block; width: 180mm; height: 114mm; }
+                    .small-chart-frame img { display: block; width: 180mm; height: 135mm; }
+                """
+                fallback_stylesheet = f"<style>{fallback_css}</style>"
+                fallback_html = re.sub(
+                    r"<link\b(?=[^>]*\bhref=[\"']report_style\.css[\"'])[^>]*>",
+                    lambda _: fallback_stylesheet,
+                    fallback_html,
+                    flags=re.IGNORECASE,
+                )
+
+            def resolve_resource(uri, _):
+                parsed_uri = urlparse(uri)
+                if parsed_uri.scheme:
+                    return uri
+                resource_path = Path(unquote(parsed_uri.path))
+                if not resource_path.is_absolute():
+                    resource_path = core_dir / resource_path
+                return str(resource_path.resolve())
+
+            def create_pdf(source):
+                with temporary_output.open("wb") as pdf_file:
+                    result = pisa.CreatePDF(
+                        src=source,
+                        dest=pdf_file,
+                        encoding='utf-8',
+                        path=str(core_dir),
+                        link_callback=resolve_resource
+                    )
+                if result.err:
+                    raise RuntimeError(
+                        f"xhtml2pdf không thể tạo báo cáo PDF ({result.err} lỗi)."
+                    )
+
+            try:
+                create_pdf(fallback_html)
+            except AttributeError as exc:
+                if "KeepTogether" not in str(exc) or "draw" not in str(exc):
+                    raise
+                print(
+                    "[PDF] xhtml2pdf KeepTogether error; retrying without CSS."
+                )
+                plain_html = re.sub(
+                    r"<style\b[^>]*>.*?</style>|<link\b[^>]*>",
+                    "",
+                    rendered_html,
+                    flags=re.IGNORECASE | re.DOTALL,
+                )
+                create_pdf(plain_html)
+            print("-> PDF exported successfully with xhtml2pdf.")
+
+        if not temporary_output.is_file() or temporary_output.stat().st_size == 0:
+            raise RuntimeError("Renderer không tạo được file PDF.")
+        with temporary_output.open("rb") as pdf_file:
+            if pdf_file.read(5) != b"%PDF-":
+                raise RuntimeError("Renderer tạo ra file không đúng định dạng PDF.")
+        os.replace(temporary_output, output_path)
+        return str(output_path)
+    finally:
+        if temporary_output.exists():
+            temporary_output.unlink()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(

@@ -1,7 +1,8 @@
 import threading
 import time
-from datetime import datetime, time as dt_time
+from datetime import datetime
 
+from core.market_data import is_vietnam_trading_session
 from stock_bot.data_pipeline.collectors.vietcap_collector import (
     VietcapCollector
 )
@@ -452,15 +453,7 @@ def start_realtime_pipeline():
 
     def run_snapshot_refresh():
         while not stop_event.wait(120):
-            now = datetime.now()
-            is_trading_hours = (
-                now.weekday() < 5
-                and (
-                    dt_time(9, 0) <= now.time() <= dt_time(11, 30)
-                    or dt_time(13, 0) <= now.time() <= dt_time(15, 0)
-                )
-            )
-            if not is_trading_hours:
+            if not is_vietnam_trading_session():
                 continue
 
             try:

@@ -34,6 +34,14 @@ streamlit run app.py
 Sau vài giây, trình duyệt web của bạn sẽ tự động mở trang web tại địa chỉ `http://localhost:8501`. 
 Bạn chỉ cần nhập mã cổ phiếu (VD: FPT, HPG, VCB) vào ô tìm kiếm và hệ thống sẽ tự động làm phần việc còn lại!
 
+### Dữ liệu giá trên dashboard
+- Khi mở báo cáo một mã, dashboard khởi động realtime pipeline nền một lần cho tiến trình Streamlit. WebSocket Vietcap ghi dữ liệu mới vào `data/market_data.db`; nguồn và thời điểm giá đang hiển thị được ghi ngay dưới báo cáo.
+- Trong phiên giao dịch Việt Nam (thứ Hai–thứ Sáu, 09:00–11:30 và 13:00–15:00), dashboard ưu tiên quote realtime còn mới; nếu chưa có quote trong cache, hệ thống lấy snapshot bảng giá Vietcap.
+- Ngoài khung giờ giao dịch, dashboard dùng giá đóng cửa lịch sử gần nhất và không yêu cầu quote realtime. Dashboard kiểm tra/cập nhật quote mỗi 2 phút khi đang mở báo cáo.
+- Không chạy thêm `python -m stock_bot.data_pipeline.main` đồng thời với dashboard; Streamlit đã tự khởi động pipeline khi tra cứu mã và chạy hai tiến trình sẽ tạo kết nối dữ liệu trùng lặp.
+- Trên Windows nếu WeasyPrint thiếu thư viện hệ thống, PDF dùng xhtml2pdf; biểu đồ SVG được chuyển sang PNG để vẫn hiển thị trong báo cáo.
+- Để hiển thị sàn giao dịch, đặt CSV danh sách mã tại `data/symbols.csv` (hoặc `data/symbol.csv`) với các cột `symbol` và `exchange`.
+
 ## 📁 Cấu Trúc Mã Nguồn Cơ Bản
 - `app.py`: File chạy chính của giao diện Streamlit.
 - `core/`: Chứa các module xử lý dữ liệu lõi (market_data.py, annual_report.py...).
