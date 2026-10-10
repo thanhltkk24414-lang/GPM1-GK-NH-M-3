@@ -84,7 +84,7 @@ st.markdown("""
     }
 
     /* Hiệu ứng chung cho các khối: đổ bóng, bo góc, pop-up khi hover */
-    [data-testid="stMetric"], .summary-box, .welcome-box, .image-box {
+    [data-testid="stMetric"], .summary-box, .welcome-box, .image-box, [data-testid="stPlotlyChart"] {
         background-color: var(--secondary-background-color) !important;
         background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0%, rgba(0, 0, 0, 0.05) 100%) !important;
         backdrop-filter: blur(10px) !important;
@@ -97,7 +97,7 @@ st.markdown("""
         margin-bottom: 15px;
     }
 
-    [data-testid="stMetric"]:hover, .summary-box:hover, .welcome-box:hover, .image-box:hover {
+    [data-testid="stMetric"]:hover, .summary-box:hover, .welcome-box:hover, .image-box:hover, [data-testid="stPlotlyChart"]:hover {
         transform: translateY(-6px) scale(1.02) !important;
         box-shadow: 0 15px 30px rgba(138, 43, 226, 0.2) !important;
         z-index: 10;
@@ -243,7 +243,7 @@ st.markdown("""
     }
 
     /* 4. Đổ bóng lấp lánh liên tục và hiệu ứng shine cho các hộp (Box) ở vùng nền */
-    [data-testid="stMetric"], .summary-box, .welcome-box, .image-box, table.custom-table {
+    [data-testid="stMetric"], .summary-box, .welcome-box, .image-box, table.custom-table, [data-testid="stPlotlyChart"] {
         animation: boxSparkle 3s infinite alternate;
         box-shadow: 0 8px 16px rgba(0,0,0,0.6) !important;
         position: relative;
@@ -256,7 +256,7 @@ st.markdown("""
     }
 
     /* Tia sáng lướt qua lấp lánh (Bling Bling tự động) */
-    [data-testid="stMetric"]::before, .summary-box::before, .welcome-box::before, .image-box::before {
+    [data-testid="stMetric"]::before, .summary-box::before, .welcome-box::before, .image-box::before, [data-testid="stPlotlyChart"]::before {
         content: '';
         position: absolute;
         top: 0;
@@ -271,7 +271,7 @@ st.markdown("""
     }
     
     /* Đảm bảo nội dung trong box nằm trên tia sáng */
-    .welcome-box p, .welcome-box ul, .summary-box *, [data-testid="stMetric"] * {
+    .welcome-box p, .welcome-box ul, .summary-box *, [data-testid="stMetric"] *, [data-testid="stPlotlyChart"] * {
         position: relative;
         z-index: 2;
     }
