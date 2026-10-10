@@ -735,8 +735,14 @@ if st.session_state.get("report_ticker"):
                                 f"{amounts[year]:,.1f}" if amounts.get(year) is not None else ""
                                 for year in chart_years
                             ],
-                            textposition="outside",
-                            marker_color="#1e3a8a",
+                            textposition="inside",
+                            insidetextanchor="end",
+                            textfont=dict(color="white"),
+                            marker=dict(
+                                color="rgba(59, 130, 246, 0.85)",
+                                line=dict(color="#2563eb", width=1.5)
+                            ),
+                            hovertemplate="%{y:,.1f} Tỷ đồng<extra></extra>",
                         )
                         yoy_series = [yoy_values.get(year) for year in chart_years]
                         yoy_bound = max(
@@ -753,9 +759,12 @@ if st.session_state.get("report_ticker"):
                                 for value in yoy_series
                             ],
                             textposition="top center",
+                            textfont=dict(color="#fcd34d", size=13),
                             connectgaps=False,
                             yaxis="y2",
-                            line=dict(color="#10b981", width=3),
+                            line=dict(color="#f59e0b", width=3.5),
+                            marker=dict(size=8, color="#f59e0b"),
+                            hovertemplate="YoY: %{y:+.1f}%<extra></extra>",
                         )
                         if chart_years and yoy_series[0] is None:
                             financial_fig.add_annotation(
@@ -770,16 +779,18 @@ if st.session_state.get("report_ticker"):
                             template="plotly_dark",
                             height=380,
                             margin=dict(l=30, r=30, t=30, b=30),
-                            title=dict(text=label, font=dict(size=14)),
+                            title=dict(text=label, font=dict(size=14, color="#e2e8f0")),
                             paper_bgcolor="rgba(0,0,0,0)",
                             plot_bgcolor="rgba(0,0,0,0)",
-                            xaxis=dict(type="category"),
-                            yaxis=dict(title="Tỷ đồng"),
+                            hovermode="x unified",
+                            xaxis=dict(type="category", showgrid=False, title=""),
+                            yaxis=dict(title="Tỷ đồng", showgrid=True, gridcolor="rgba(255,255,255,0.1)"),
                             yaxis2=dict(
                                 title="YoY (%)",
                                 overlaying="y",
                                 side="right",
                                 range=[-yoy_bound, yoy_bound],
+                                showgrid=False,
                             ),
                             legend=dict(orientation="h", yanchor="bottom", y=1.02),
                         )
