@@ -8,25 +8,30 @@
 <body>
   <!-- ==================== TRANG 1: TỔNG QUAN, BIỂU ĐỒ & CHỈ SỐ ==================== -->
   <section class="page page-one">
-    <header class="report-header">
-      <div class="brand-block">
-        <div class="brand-mark">FIN</div>
-        <div class="brand-caption">KHỐI PHÂN TÍCH — EQUITY RESEARCH</div>
-      </div>
-      <div class="report-title">
-        <div class="eyebrow">BÁO CÁO PHÂN TÍCH CỔ PHIẾU</div>
-        <h1>{{ company_name or ticker }}</h1>
-        <p>Ngày phát hành: {{ report_date }}</p>
-      </div>
-      <div class="recommendation">
-        <div class="eyebrow">KHUYẾN NGHỊ</div>
-        <div class="recommendation-value">{{ recommendation }}</div>
-        <div>Giá mục tiêu</div>
-        <strong>{{ target_price }}</strong>
-        <div class="upside">Tiềm năng {{ upside }}</div>
-      </div>
-    </header>
+    <table class="report-header">
+      <tbody>
+        <tr>
+          <td class="brand-block">
+            <div class="brand-mark">FIN</div>
+            <div class="brand-caption">KHỐI PHÂN TÍCH — EQUITY RESEARCH</div>
+          </td>
+          <td class="report-title">
+            <div class="eyebrow">BÁO CÁO PHÂN TÍCH CỔ PHIẾU</div>
+            <h1>{{ company_name or ticker }}</h1>
+            <p>Ngày phát hành: {{ report_date }}</p>
+          </td>
+          <td class="recommendation">
+            <div class="eyebrow">KHUYẾN NGHỊ</div>
+            <div class="recommendation-value">{{ recommendation }}</div>
+            <div>Giá mục tiêu</div>
+            <strong>{{ target_price }}</strong>
+            <div class="upside">Tiềm năng {{ upside }}</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
 
+    <br>
     <section class="stock-intro">
       <div class="stock-name-line">
         <h2>{{ ticker }}</h2>
@@ -119,15 +124,6 @@
       </div>
     </section>
 
-    {% if financial_chart %}
-    <section class="panel chart-panel financial-charts">
-      <h3>KẾT QUẢ KINH DOANH &amp; TĂNG TRƯỞNG</h3>
-      <div class="small-chart-frame">
-        <img src="{{ financial_chart }}" alt="Biểu đồ doanh thu hoặc thu nhập lãi thuần và lợi nhuận sau thuế, kèm tăng trưởng YoY">
-      </div>
-    </section>
-    {% endif %}
-
     {% if valuation_methods or valuation_summary %}
     <section class="panel valuation-section">
       <h3>KẾT QUẢ ĐỊNH GIÁ CỔ PHIẾU</h3>
@@ -165,6 +161,7 @@
     {% endif %}
 
     {% if score_breakdown %}
+    <br>
     <section class="panel score-section">
       <h3>CƠ SỞ CHẤM ĐIỂM &amp; KHUYẾN NGHỊ</h3>
       <p class="source-note">{{ score_breakdown.formula }} Ngưỡng: MUA từ {{ score_breakdown.buy_threshold }}/100; BÁN dưới {{ score_breakdown.sell_threshold }}/100; còn lại GIỮ. Điểm cộng kết hợp: +{{ score_breakdown.bonus }}.</p>
