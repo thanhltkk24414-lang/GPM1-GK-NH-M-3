@@ -5,6 +5,7 @@ import traceback
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from core.report_pdf import (
     generate_pdf,
     load_stock_report_data,
@@ -104,6 +105,11 @@ st.markdown("""
         transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
         border: 1px solid rgba(138, 43, 226, 0.3) !important;
         margin-bottom: 15px;
+    }
+
+    [data-testid="stPlotlyChart"] {
+        padding: 8px !important;
+        overflow: visible !important;
     }
 
     [data-testid="stMetric"]:hover, .summary-box:hover, .welcome-box:hover, .image-box:hover, [data-testid="stPlotlyChart"]:hover {
@@ -576,7 +582,7 @@ if st.session_state.get("report_ticker"):
                 )
 
             # --- 2. BIỂU ĐỒ GIÁ ---
-            st.markdown(f'<div class="section-header">📈 {hoverify("2. Biểu Đồ Diễn Biến Giá")}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="section-header">📈 {hoverify("2. Biểu Đồ Diễn Biến Giá & Khối Lượng (Đơn vị giá: nghìn đồng)")}</div>', unsafe_allow_html=True)
             
             # Vẽ biểu đồ nến bằng Plotly thay vì SVG tĩnh
             try:
@@ -592,27 +598,84 @@ if st.session_state.get("report_ticker"):
                     # Chuyển ngày sang chuỗi để loại bỏ hoàn toàn khoảng trống giữa các nến
                     df_stock['date_str'] = df_stock['date'].dt.strftime('%d-%m-%Y')
                     
-                    fig = go.Figure(data=[go.Candlestick(x=df_stock['date'],
-                                    open=df_stock['open'],
-                                    high=df_stock['high'],
-                                    low=df_stock['low'],
-                                    close=df_stock['close'],
-                                    increasing_line_color='#089981', increasing_fillcolor='#089981', # Xanh TradingView
-                                    decreasing_line_color='#F23645', decreasing_fillcolor='#F23645', # Đỏ TradingView
-                                    name='Giá')])
+                    has_volume = "volume" in df_stock.columns and df_stock["volume"].notna().any()
+                    
+                    if has_volume:
+                        fig = make_subplots(
+                            rows=2, cols=1,
+                            shared_xaxes=True,
+                            vertical_spacing=0.04,
+                            row_heights=[0.74, 0.26]
+                        )
+                    else:
+                        fig = go.Figure()
+
+                    # Nến giá kèm thông tin volume trong tooltip hover
+                    vol_data = df_stock["volume"].fillna(0) if has_volume else [0] * len(df_stock)
+                    candlestick_trace = go.Candlestick(
+                        x=df_stock['date_str'],
+                        open=df_stock['open'],
+                        high=df_stock['high'],
+                        low=df_stock['low'],
+                        close=df_stock['close'],
+                        customdata=vol_data,
+                        hovertemplate=(
+                            "<b>%{x}</b><br>"
+                            "Mở cửa: %{open:,.1f}<br>"
+                            "Cao nhất: %{high:,.1f}<br>"
+                            "Thấp nhất: %{low:,.1f}<br>"
+                            "Đóng cửa: %{close:,.1f}<br>"
+                            + ("Khối lượng: %{customdata:,.0f} CP<br>" if has_volume else "")
+                            + "<extra></extra>"
+                        ),
+                        increasing_line_color='#089981', increasing_fillcolor='#089981', # Xanh TradingView
+                        decreasing_line_color='#F23645', decreasing_fillcolor='#F23645', # Đỏ TradingView
+                        name='Giá'
+                    )
+
+                    if has_volume:
+                        fig.add_trace(candlestick_trace, row=1, col=1)
+                        # Cột khối lượng Volume (xanh khi giá tăng, đỏ khi giá giảm)
+                        vol_colors = [
+                            '#089981' if c >= o else '#F23645'
+                            for c, o in zip(df_stock['close'], df_stock['open'])
+                        ]
+                        fig.add_trace(
+                            go.Bar(
+                                x=df_stock['date_str'],
+                                y=df_stock['volume'],
+                                marker_color=vol_colors,
+                                name='Khối lượng',
+                                hovertemplate="<b>%{x}</b><br>Khối lượng: %{y:,.0f} CP<extra></extra>"
+                            ),
+                            row=2, col=1
+                        )
+                    else:
+                        fig.add_trace(candlestick_trace)
+
                     if current_price is not None:
                         current_label = (
                             "Giá realtime"
                             if report_data.get("quote_is_realtime")
                             else "Giá đóng cửa"
                         )
-                        fig.add_hline(
-                            y=current_price,
-                            line_dash="dot",
-                            line_color="#f6c85f",
-                            annotation_text=current_label,
-                            annotation_position="top left",
-                        )
+                        if has_volume:
+                            fig.add_hline(
+                                y=current_price,
+                                line_dash="dot",
+                                line_color="#f6c85f",
+                                annotation_text=current_label,
+                                annotation_position="top left",
+                                row=1, col=1
+                            )
+                        else:
+                            fig.add_hline(
+                                y=current_price,
+                                line_dash="dot",
+                                line_color="#f6c85f",
+                                annotation_text=current_label,
+                                annotation_position="top left",
+                            )
                     
                     min_price = min(
                         df_stock['low'].min(),
@@ -622,38 +685,51 @@ if st.session_state.get("report_ticker"):
                         df_stock['high'].max(),
                         current_price if current_price is not None else float("-inf"),
                     ) * 1.2
-                    
-                    min_date = df_stock['date'].min() - pd.Timedelta(days=10)
-                    max_date = df_stock['date'].max() + pd.Timedelta(days=10)
 
                     fig.update_layout(
-                        margin=dict(l=20, r=20, t=20, b=60),
+                        margin=dict(l=20, r=40, t=25, b=95),
                         paper_bgcolor="rgba(0,0,0,0)",
                         plot_bgcolor="rgba(0,0,0,0)",
-                        xaxis_rangeslider_visible=False,
                         hovermode="closest",
                         dragmode="pan",
-                        height=600, # Phóng to chiều cao chart
-                        yaxis=dict(
-                            side="right", # Chuyển trục giá sang bên phải
+                        height=720, # Đảm bảo đủ chiều cao rộng rãi cho cả Giá, Volume và Trục ngày
+                        showlegend=False,
+                    )
+
+                    fig.update_xaxes(
+                        type='category',
+                        rangeslider_visible=False,
+                        fixedrange=False,
+                        range=[-0.5, len(df_stock) - 0.5],
+                        nticks=12,
+                        tickangle=0,
+                        tickfont=dict(size=13, color="#ffffff"),
+                        showline=True,
+                        linecolor="rgba(138, 43, 226, 0.4)",
+                    )
+
+                    if has_volume:
+                        fig.update_yaxes(
+                            side="right",
+                            fixedrange=False,
+                            minallowed=min_price,
+                            maxallowed=max_price,
+                            row=1, col=1
+                        )
+                        fig.update_yaxes(
+                            side="right",
+                            fixedrange=False,
+                            tickformat="~s",
+                            row=2, col=1
+                        )
+                    else:
+                        fig.update_yaxes(
+                            side="right",
                             fixedrange=False,
                             minallowed=min_price,
                             maxallowed=max_price
-                        ),
-                        xaxis=dict(
-                            type='date',
-                            rangebreaks=[
-                                dict(bounds=["sat", "mon"]), # Ẩn thứ 7, Chủ Nhật
-                            ],
-                            fixedrange=False,
-                            minallowed=min_date,
-                            maxallowed=max_date,
-                            range=[df_stock['date'].min() - pd.Timedelta(days=2), df_stock['date'].max() + pd.Timedelta(days=2)],
-                            nticks=10,
-                            tickangle=0,
-                            tickformat="%d-%m-%Y"
                         )
-                    )
+
                     st.plotly_chart(
                         fig,
                         use_container_width=True,
