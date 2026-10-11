@@ -102,9 +102,12 @@ def load_price_history(ticker, database_path=None):
                 history = pd.read_sql_query(
                     history_query, connection, params=(ticker.upper(),)
                 )
-                indicators = pd.read_sql_query(
-                    indicators_query, connection, params=(ticker.upper(),)
-                )
+                try:
+                    indicators = pd.read_sql_query(
+                        indicators_query, connection, params=(ticker.upper(),)
+                    )
+                except Exception:
+                    indicators = pd.DataFrame()
         except Exception as e:
             if 'old_stdout' in locals():
                 sys.stdout = old_stdout
