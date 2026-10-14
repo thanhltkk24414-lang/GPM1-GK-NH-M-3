@@ -1,18 +1,8 @@
 """Lấy tin tức gần đây về một mã cổ phiếu Việt Nam.
 
-Data contract tương thích với ``core.scoring.score_news``::
-
-    {
-        "symbol": "FPT",
-        "headlines": [{"title": "...", "url": "...", ...}],
-        "status": "ok" | "empty" | "error",
-        "source": "DuckDuckGo News",
-        "fetched_at": "2026-10-09T12:00:00+00:00",
-        "error": None,
-    }
-
-Kết quả tin tức là dữ liệu tìm kiếm, không phải nguồn xác nhận sự kiện.
-Dashboard nên hiện tiêu đề, nguồn, ngày và liên kết để người dùng mở bài gốc.
+Kết quả tin tức là dữ liệu tìm kiếm, không phải nguồn xác nhận sự kiện hay
+thành phần của điểm tổng. Dashboard nên hiện tiêu đề, nguồn, ngày và liên kết
+để người dùng mở bài gốc.
 """
 
 from __future__ import annotations
@@ -143,7 +133,7 @@ def _relevance_for(item: dict[str, str | None], symbol: str) -> str | None:
 
 
 def _normalize_result(item: dict[str, Any]) -> dict[str, str | None] | None:
-    """Chuẩn hóa schema của DDGS về schema ổn định cho dashboard/scoring."""
+    """Chuẩn hóa schema của DDGS về schema ổn định cho dashboard."""
     title = _clean(item.get("title"))
     url = _clean(item.get("url") or item.get("href"))
     if not title or not url:
@@ -283,9 +273,10 @@ def fetch_stock_news(
                     seen.add(key)
                     period_headlines.append(normalized)
 
-            if period_headlines:
-                headlines = period_headlines
+            headlines.extend(period_headlines)
+            if headlines:
                 result["period_used"] = current_period
+            if len(headlines) >= limit:
                 break
 
         if not headlines and successful_searches == 0 and last_search_error is not None:

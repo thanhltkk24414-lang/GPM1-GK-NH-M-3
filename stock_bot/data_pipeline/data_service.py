@@ -80,11 +80,7 @@ class DataService:
         today = now.date()
         market_close_time = time(15, 0) # 15:00 là giờ đóng cửa hẳn của thị trường VN
 
-        # Nếu thời điểm hiện tại CHƯA QUA 15:00 ngày hôm nay, 
-        # ta loại bỏ dòng của ngày hôm nay khỏi dữ liệu lịch sử.
-        if now.time() < market_close_time:
-            df = df[df["date"].dt.date < today]
-
+ 
         if df.empty:
             return None
 

@@ -20,10 +20,13 @@ from datetime import datetime
 import hashlib
 import io
 import re
+import tempfile
 import time
+import unicodedata
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, unquote
 
+import pymupdf
 import requests
 from bs4 import BeautifulSoup
 from ddgs import DDGS
@@ -48,6 +51,8 @@ REQUEST_TIMEOUT = 25
 MAX_SEARCH_RESULTS = 8
 MAX_PAGES_TO_CRAWL = 5
 DELAY_SECONDS = 1
+MAX_VALIDATION_PAGES = 40
+_PDF_OCR_ENGINE = None
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -77,7 +82,7 @@ COMPANY_NAMES = {
     "LPB": ["LPBank", "Lien Viet Post Bank"],
     "VNM": ["Vinamilk", "Vietnam Dairy Products"],
     "FPT": ["FPT Corporation"],
-    "HPG": ["Hoa Phat Group"],
+    "HPG": ["Hoa Phat Group", "Tập đoàn Hòa Phát"],
     "MWG": ["Mobile World Investment Corporation", "The Gioi Di Dong"],
     "PNJ": ["Phu Nhuan Jewelry"],
     "GMD": ["Gemadept"],
@@ -517,6 +522,553 @@ def search_pdf_links(ticker, year):
 
     print("  Khong tim thay link PDF tu cac nguon da thu.")
     return []
+
+
+def build_financial_statement_queries(ticker, year):
+    """Create search queries for audited annual financial statements."""
+    ticker = ticker.strip().upper()
+    queries = [
+        f'"{ticker}" "báo cáo tài chính năm" "đã kiểm toán" {year} filetype:pdf',
+        f'"{ticker}" "báo cáo tài chính hợp nhất" "kiểm toán độc lập" {year} filetype:pdf',
+        f'"{ticker}" "audited financial statements" "year ended" {year} PDF',
+    ]
+    for company_name in get_company_names(ticker)[:2]:
+        queries.extend([
+            f'"{company_name}" "báo cáo tài chính năm" "đã kiểm toán" {year} PDF',
+            f'"{company_name}" "audited financial statements" "year ended" {year} PDF',
+        ])
+    return list(dict.fromkeys(queries))
+
+
+def _search_text(value):
+    text = unicodedata.normalize("NFKD", str(value)).casefold()
+    text = text.replace("đ", "d")
+    return "".join(char for char in text if not unicodedata.combining(char))
+
+
+def financial_statement_relevance_score(ticker, year, url, title="", description=""):
+    """Score a candidate PDF using company, report year, and audit terms."""
+    text = _search_text(unquote(f"{url} {title} {description}"))
+    if any(term in text for term in (
+        "explanation",
+        "giai trinh",
+        "annual report",
+        "bao cao thuong nien",
+        "six months",
+        "6 months",
+        "six-month",
+        "half-year",
+        "semi-annual",
+        "semiannual",
+        "quarterly",
+        "bao cao quy",
+        "ban nien",
+    )):
+        return 0
+    if str(year) not in text:
+        return 0
+
+    company_terms = [
+        _search_text(ticker),
+        *(_search_text(name) for name in get_company_names(ticker)),
+    ]
+    if not any(term in text for term in company_terms):
+        return 0
+
+    statement_terms = (
+        "bao cao tai chinh",
+        "financial statements",
+        "financial-statement",
+    )
+    audit_terms = ("kiem toan", "audited", "audit report")
+    if not any(term in text for term in statement_terms):
+        return 0
+    if not any(term in text for term in audit_terms):
+        return 0
+
+    score = 4
+    if _search_text(ticker) in text:
+        score += 4
+    if "hop nhat" in text or "consolidated" in text:
+        score += 2
+    if is_pdf_url(url):
+        score += 2
+    return score
+
+
+def financial_statement_source(url):
+    host = (urlparse(url).hostname or "").casefold()
+    if host == "hsx.vn" or host.endswith(".hsx.vn"):
+        return "HOSE"
+    if host == "hnx.vn" or host.endswith(".hnx.vn"):
+        return "HNX"
+    if (
+        host == "cafef.vn"
+        or host.endswith(".cafef.vn")
+        or host.endswith(".mediacdn.vn")
+    ):
+        return "CafeF"
+    if host == "vietstock.vn" or host.endswith(".vietstock.vn"):
+        return "Vietstock"
+    return "Trang doanh nghiệp / nguồn web"
+
+
+def _is_exchange_source(url):
+    host = (urlparse(url).hostname or "").casefold()
+    return (
+        host == "hsx.vn"
+        or host.endswith(".hsx.vn")
+        or host == "hnx.vn"
+        or host.endswith(".hnx.vn")
+    )
+
+
+def _is_issuer_ir_page(url):
+    path = _search_text(urlparse(url).path)
+    return any(
+        term in path
+        for term in (
+            "investor",
+            "quan-he-co-dong",
+            "co-dong",
+            "shareholder",
+            "financial-report",
+        )
+    )
+
+
+def _ocr_pdf_page(page):
+    """Read a scanned statement page using the optional local OCR extra."""
+    global _PDF_OCR_ENGINE
+    try:
+        import numpy as np
+        from rapidocr_onnxruntime import RapidOCR
+    except ImportError as exc:
+        raise RuntimeError(
+            "PDF dạng scan cần OCR. Cài thêm bằng: "
+            "python -m pip install -r requirements-ocr.txt"
+        ) from exc
+
+    if _PDF_OCR_ENGINE is None:
+        _PDF_OCR_ENGINE = RapidOCR()
+
+    pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
+    image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
+        pixmap.height, pixmap.width, pixmap.n
+    )
+    result, _ = _PDF_OCR_ENGINE(image)
+    return "\n".join(
+        str(item[1]).strip()
+        for item in (result or [])
+        if len(item) > 1 and str(item[1]).strip()
+    )
+
+
+def validate_audited_annual_financial_statement(pdf_path, ticker, year):
+    """Check extracted PDF content for audited annual financial statements."""
+    ocr_error = None
+    try:
+        with pymupdf.open(pdf_path) as document:
+            pages = []
+            for page in document[:MAX_VALIDATION_PAGES]:
+                page_text = page.get_text()
+                if len(page_text.strip()) < 40:
+                    try:
+                        page_text = _ocr_pdf_page(page)
+                    except RuntimeError as exc:
+                        ocr_error = str(exc)
+                        break
+                pages.append(page_text)
+            opening_text = _search_text(" ".join(pages[:5]))
+            text = _search_text(" ".join(pages))
+    except (OSError, RuntimeError, ValueError) as exc:
+        return False, f"Không đọc được nội dung PDF: {exc}"
+
+    if not text.strip():
+        if ocr_error:
+            return False, ocr_error
+        return False, "PDF không có lớp văn bản để xác minh nội dung báo cáo."
+
+    if any(term in opening_text for term in (
+        "explanation",
+        "giai trinh",
+        "explain the business result",
+    )):
+        return False, "Tài liệu là văn bản giải trình, không phải bộ báo cáo tài chính."
+
+    interim_terms = (
+        "six months",
+        "6 months",
+        "six-month",
+        "half-year",
+        "semi-annual",
+        "semiannual",
+        "interim financial",
+        "bao cao ban nien",
+        "6 thang",
+        "sau thang",
+        "quarter ended",
+        "annual report",
+        "bao cao thuong nien",
+    )
+    if any(term in opening_text for term in interim_terms):
+        return False, "Tài liệu không phải BCTC năm đã kiểm toán."
+
+    company_terms = [
+        _search_text(ticker),
+        *(_search_text(name) for name in get_company_names(ticker)),
+    ]
+    if not any(term in text for term in company_terms):
+        return False, f"Không xác minh được doanh nghiệp {ticker} trong nội dung PDF."
+    if str(year) not in text:
+        return False, f"Không tìm thấy năm báo cáo {year} trong nội dung PDF."
+
+    statement_groups = (
+        ("bang can doi ke toan", "statement of financial position", "balance sheet"),
+        (
+            "bao cao ket qua hoat dong kinh doanh",
+            "statement of profit or loss",
+            "income statement",
+        ),
+        (
+            "bao cao luu chuyen tien te",
+            "statement of cash flows",
+            "cash flow statement",
+        ),
+    )
+    statement_count = sum(
+        any(term in text for term in terms) for terms in statement_groups
+    )
+    if statement_count < 2:
+        return False, "PDF không có đủ các bảng báo cáo tài chính cơ bản."
+
+    audit_terms = (
+        "bao cao kiem toan doc lap",
+        "kiem toan doc lap",
+        "chung toi da kiem toan",
+        "we have audited",
+        "independent auditor",
+        "independent auditors report",
+    )
+    if not any(term in text for term in audit_terms):
+        return False, "Không tìm thấy ý kiến/báo cáo kiểm toán trong PDF."
+
+    annual_period_patterns = (
+        rf"31\s*/\s*12\s*/?\s*{year}\b",
+        rf"31\s+thang\s+12\s+nam\s+{year}\b",
+        rf"31\s+(?:december|dec)\s+{year}\b",
+        rf"year ended[^.\n]{{0,100}}{year}\b",
+        rf"nam tai chinh ket thuc[^.\n]{{0,100}}{year}\b",
+    )
+    if not any(re.search(pattern, text) for pattern in annual_period_patterns):
+        return False, "Không xác minh được kỳ báo cáo năm kết thúc ngày 31/12."
+
+    return True, "Đã xác minh BCTC năm đã kiểm toán."
+
+
+def search_cafef_financial_statement_pdf_links(ticker, year):
+    """Read CafeF's public per-ticker document feed and select audited annual PDFs."""
+    ticker = ticker.strip().upper()
+    endpoint = (
+        "https://cafef.vn/du-lieu/Ajax/PageNew/FileBCTC.ashx"
+        f"?Symbol={ticker}&Type=1&Year=0"
+    )
+    try:
+        response = requests.get(
+            endpoint,
+            headers={
+                **HEADERS,
+                "Referer": "https://cafef.vn/",
+                "Accept": "application/json, text/plain, */*",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException as exc:
+        print(f"  Khong truy cap duoc danh muc BCTC CafeF cho {ticker}: {exc}")
+        return []
+    except ValueError as exc:
+        raise RuntimeError(f"CafeF trả dữ liệu JSON không hợp lệ cho {ticker}.") from exc
+
+    records = payload.get("Data") if isinstance(payload, dict) else None
+    if not isinstance(records, list):
+        raise RuntimeError(f"CafeF trả cấu trúc danh mục BCTC không hợp lệ cho {ticker}.")
+
+    candidates = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        try:
+            record_year = int(record.get("Year"))
+        except (TypeError, ValueError):
+            continue
+        if record_year != year:
+            continue
+
+        title = str(record.get("Name") or "").strip()
+        normalized_title = _search_text(title)
+        if any(term in normalized_title for term in (
+            "giai trinh",
+            "quy ",
+            "q1",
+            "q2",
+            "q3",
+            "q4",
+            "ban nien",
+            "6 thang",
+            "soat xet",
+            "interim",
+            "quarter",
+            "semiannual",
+        )):
+            continue
+        is_annual = (
+            "nam" in normalized_title
+            or "year ended" in normalized_title
+            or str(record.get("Quarter")) == "5"
+        )
+        is_audited = any(
+            term in normalized_title
+            for term in ("kiem toan", "audited", "audit report")
+        )
+        if not is_annual or not is_audited:
+            continue
+
+        url = normalize_url(record.get("Link"))
+        if not url or not is_pdf_url(url):
+            continue
+        score = (
+            2
+            if "hop nhat" in normalized_title or "consolidated" in normalized_title
+            else 0
+        )
+        candidates.append((score, url))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return list(dict.fromkeys(url for _, url in candidates))
+
+
+def extract_financial_statement_pdf_links(page_url, ticker, year, page_context=""):
+    """Extract relevant PDF links from a company or search-result page."""
+    page_url = normalize_url(page_url)
+    if not page_url:
+        return []
+
+    try:
+        response = requests.get(
+            page_url,
+            headers=HEADERS,
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        if response.content[:5] == b"%PDF-":
+            if financial_statement_relevance_score(
+                ticker, year, response.url, page_context
+            ):
+                return [response.url]
+            return []
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        candidates = []
+        for anchor in soup.find_all("a", href=True):
+            url = normalize_url(urljoin(response.url, anchor["href"].strip()))
+            if not url:
+                continue
+            title = anchor.get_text(" ", strip=True)
+            if financial_statement_relevance_score(
+                ticker, year, url, title, page_context
+            ):
+                candidates.append(url)
+        return list(dict.fromkeys(candidates))
+    except requests.RequestException as exc:
+        print(f"  Khong doc duoc trang ket qua {page_url}: {exc}")
+        return []
+
+
+def _search_financial_statement_results(queries, ticker, year, official_only=False):
+    ticker = ticker.strip().upper()
+    candidates = []
+    seen_urls = set()
+    failed_queries = []
+
+    for query in queries:
+        try:
+            with DDGS() as search:
+                results = list(search.text(
+                    query,
+                    region="vn-vi",
+                    max_results=MAX_SEARCH_RESULTS,
+                ))
+        except Exception as exc:
+            print(f"  Bo qua truy van BCTC loi: {exc}")
+            failed_queries.append(str(exc))
+            continue
+
+        for result in results:
+            url = normalize_url(
+                result.get("href") or result.get("url") or result.get("link")
+            )
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            is_official_result = _is_exchange_source(url) or _is_issuer_ir_page(url)
+            if official_only and not is_official_result:
+                continue
+            if not official_only and is_official_result:
+                continue
+            title = result.get("title", "") or ""
+            description = result.get("body", "") or ""
+            score = financial_statement_relevance_score(
+                ticker, year, url, title, description
+            )
+            if score and is_pdf_url(url):
+                candidates.append((score, url))
+                continue
+            if _is_exchange_source(url) or _is_issuer_ir_page(url):
+                for pdf_url in extract_financial_statement_pdf_links(
+                    url, ticker, year, f"{title} {description}"
+                ):
+                    pdf_score = financial_statement_relevance_score(
+                        ticker, year, pdf_url, title, description
+                    )
+                    candidates.append((pdf_score, pdf_url))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    if not candidates and failed_queries and len(failed_queries) == len(queries):
+        raise RuntimeError(
+            f"Dịch vụ tìm kiếm web không phản hồi: {failed_queries[-1]}"
+        )
+    return list(dict.fromkeys(url for _, url in candidates))
+
+
+def search_official_financial_statement_pdf_links(ticker, year):
+    """Search exchange disclosures and company investor-relations pages first."""
+    ticker = ticker.strip().upper()
+    names = get_company_names(ticker)
+    queries = [
+        f'site:hsx.vn "{ticker}" "báo cáo tài chính" "kiểm toán" {year} PDF',
+        f'site:hnx.vn "{ticker}" "báo cáo tài chính" "kiểm toán" {year} PDF',
+        f'"{ticker}" "investor relations" "audited financial statements" {year}',
+        f'"{ticker}" "quan hệ cổ đông" "báo cáo tài chính" "kiểm toán" {year}',
+    ]
+    for name in names[:2]:
+        queries.extend([
+            f'"{name}" "investor relations" "audited financial statements" {year}',
+            f'"{name}" "báo cáo tài chính năm" "đã kiểm toán" {year}',
+        ])
+    return _search_financial_statement_results(
+        list(dict.fromkeys(queries)), ticker, year, official_only=True
+    )
+
+
+def search_financial_statement_pdf_links(ticker, year):
+    """Search the web as a fallback after checking official sources."""
+    return _search_financial_statement_results(
+        build_financial_statement_queries(ticker, year),
+        ticker,
+        year,
+        official_only=False,
+    )
+
+
+def download_financial_statement_report(ticker, year, destination=None):
+    """Find and download an audited annual financial statement PDF."""
+    ticker = ticker.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{2,10}", ticker):
+        raise ValueError("Mã cổ phiếu không hợp lệ.")
+    if not isinstance(year, int) or isinstance(year, bool) or not 2000 <= year <= 2100:
+        raise ValueError("Năm báo cáo không hợp lệ.")
+
+    destination = Path(destination) if destination else (
+        OUTPUT_DIR / f"{ticker}_financial_statements_{year}.pdf"
+    )
+    if not destination.is_absolute():
+        destination = PROJECT_DIR / destination
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    cached_error = None
+    if destination.is_file():
+        try:
+            valid, cached_error = validate_audited_annual_financial_statement(
+                destination, ticker, year
+            )
+            if valid:
+                return {
+                    "ok": True,
+                    "path": destination,
+                    "url": None,
+                    "source": "Tệp PDF đã xác minh",
+                    "source_type": "cached",
+                }
+            destination.unlink()
+        except OSError as exc:
+            raise OSError(f"Không xác minh/xóa được PDF đã lưu: {exc}") from exc
+
+    rejected_reasons = []
+    search_sources = (
+        ("cafef", search_cafef_financial_statement_pdf_links),
+        ("official", search_official_financial_statement_pdf_links),
+        ("fallback", search_financial_statement_pdf_links),
+    )
+    search_errors = []
+    for source_type, search_source in search_sources:
+        try:
+            links = search_source(ticker, year)
+        except RuntimeError as exc:
+            search_errors.append(f"{source_type}: {exc}")
+            continue
+        for url in links:
+            with tempfile.NamedTemporaryFile(
+                prefix=f"{ticker}_{year}_",
+                suffix=".pdf",
+                dir=destination.parent,
+                delete=False,
+            ) as temp_file:
+                candidate_path = Path(temp_file.name)
+            candidate_path.unlink()
+            try:
+                if not download_pdf(url, candidate_path):
+                    continue
+                valid, reason = validate_audited_annual_financial_statement(
+                    candidate_path, ticker, year
+                )
+                if not valid:
+                    rejected_reasons.append(reason)
+                    print(f"    Bo qua PDF khong dung loai ({url})")
+                    continue
+                candidate_path.replace(destination)
+                return {
+                    "ok": True,
+                    "path": destination,
+                    "url": url,
+                    "source": financial_statement_source(url),
+                    "source_type": source_type,
+                }
+            finally:
+                candidate_path.unlink(missing_ok=True)
+
+    return {
+        "ok": False,
+        "path": None,
+        "url": None,
+        "error": (
+            (
+                f"Tìm thấy PDF nhưng không xác minh được đó là BCTC năm đã kiểm toán "
+                f"của {ticker} năm {year}."
+                if rejected_reasons
+                else f"Không tìm thấy PDF BCTC năm {year} đã kiểm toán cho {ticker}."
+            )
+            + (
+                f" Lý do: {'; '.join(dict.fromkeys(rejected_reasons))}"
+                if rejected_reasons else ""
+            )
+            + (
+                f" Nguồn tìm kiếm lỗi: {'; '.join(search_errors)}"
+                if search_errors else ""
+            )
+        ),
+    }
 
 
 def load_zenodo_catalog():

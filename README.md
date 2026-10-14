@@ -5,8 +5,12 @@ Một ứng dụng web được xây dựng bằng **Streamlit** giúp nhà đ�
 ## ✨ Tính Năng Nổi Bật
 - **Phân tích kỹ thuật (Technical Analysis):** Hiển thị biểu đồ giá lịch sử, khối lượng giao dịch và các chỉ số (MA, MACD, RSI).
 - **Phân tích cơ bản (Fundamental Analysis):** Truy xuất thông tin doanh nghiệp, chỉ số tài chính cơ bản.
-- **Tải Báo Cáo Thường Niên tự động:** Hệ thống tự động tìm kiếm, tải về và hiển thị Báo Cáo Thường Niên (PDF) của doanh nghiệp theo năm mới nhất.
+- **Định giá tham khảo:** Dùng trung vị EPS dương tối đa 5 năm (cần ít nhất 3 năm để chuẩn hóa) nhân với Q1–Q3 của tối thiểu 3 kỳ P/E lịch sử; nếu thiếu EPS lịch sử, dùng EPS gần nhất nhưng gắn cảnh báo và độ tin cậy thấp. P/B trung vị × BVPS cần tối thiểu 3 kỳ và được trình bày riêng, không gộp thành giá tùy ý. BVPS kế toán có thể chưa phản ánh đầy đủ giá trị đất/dự án của doanh nghiệp bất động sản. Khuyến nghị MUA/BÁN chỉ được phát khi toàn dải giá đáp ứng ngưỡng tương ứng.
+- **Tải Báo Cáo Thường Niên:** Chỉ tìm và tải PDF khi người dùng bấm nút; báo cáo đã lưu có thể tải trực tiếp.
+- **Báo cáo phân tích PDF:** Chỉ kết xuất khi người dùng yêu cầu để tránh làm chậm lúc tra cứu mã.
 - **Cơ chế "Lazy Loading" thông minh:** Không cần phải cào trước toàn bộ dữ liệu thị trường. Khi người dùng tra cứu một mã cổ phiếu bất kỳ, hệ thống mới tự động kết nối API, tạo Database, tải dữ liệu về và tính toán ngay lập tức. Điều này giúp mã nguồn cực kỳ nhẹ.
+- **Lưu dữ liệu theo mã:** Lịch sử giá được lưu trong `data/market_data.db`; báo cáo tài chính thô được lưu riêng trong `data/raw/` theo mã cổ phiếu. Lần tra cứu đầu tiên hoặc khi dữ liệu còn thiếu có thể lâu hơn; các lần sau dùng dữ liệu đã lưu, trong khi giá realtime và tin tức vẫn được cập nhật.
+- **Thông tin doanh nghiệp:** Sàn giao dịch lấy từ `data/symbols.csv`; ngành lấy từ cache `data/processed/company_metadata.csv` hoặc được tra cứu và lưu lại theo mã khi chưa có. Nếu nguồn hồ sơ không trả được thông tin, dashboard sẽ báo lỗi thay vì âm thầm bỏ qua.
 
 ## 🚀 Hướng Dẫn Cài Đặt & Chạy Ứng Dụng
 
@@ -39,6 +43,7 @@ Bạn chỉ cần nhập mã cổ phiếu (VD: FPT, HPG, VCB) vào ô tìm kiế
 - Trong phiên giao dịch Việt Nam (thứ Hai–thứ Sáu, 09:00–11:30 và 13:00–15:00), dashboard ưu tiên quote realtime còn mới; nếu chưa có quote trong cache, hệ thống lấy snapshot bảng giá Vietcap.
 - Ngoài khung giờ giao dịch, dashboard dùng giá đóng cửa lịch sử gần nhất và không yêu cầu quote realtime. Dashboard kiểm tra/cập nhật quote mỗi 2 phút khi đang mở báo cáo.
 - Không chạy thêm `python -m stock_bot.data_pipeline.main` đồng thời với dashboard; Streamlit đã tự khởi động pipeline khi tra cứu mã và chạy hai tiến trình sẽ tạo kết nối dữ liệu trùng lặp.
+- Nhận xét Gemini cho các tab dashboard được gọi tự động trong một yêu cầu chung và dùng cache trong một giờ; lỗi từ Gemini không bị cache để có thể thử lại. PDF dùng chung nhận xét tổng quan để tránh gọi trùng model.
 - Trên Windows nếu WeasyPrint thiếu thư viện hệ thống, PDF dùng xhtml2pdf; biểu đồ SVG được chuyển sang PNG để vẫn hiển thị trong báo cáo.
 - Để hiển thị sàn giao dịch, đặt CSV danh sách mã tại `data/symbols.csv` (hoặc `data/symbol.csv`) với các cột `symbol` và `exchange`.
 

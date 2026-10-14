@@ -1,7 +1,11 @@
 import unittest
-from datetime import datetime
+from contextlib import closing
+import sqlite3
+import sys
+from datetime import date, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import ModuleType
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
@@ -9,6 +13,7 @@ import pandas as pd
 
 from core.market_data import (
     is_vietnam_trading_session,
+    load_price_history,
     load_realtime_quote,
     load_symbol_metadata,
 )
@@ -113,12 +118,10 @@ class ReportQuoteSelectionTests(unittest.TestCase):
             ],
         }
 
-    @patch("core.report_pdf._apply_company_metadata", side_effect=lambda report, _: report)
-    @patch("core.report_pdf.load_company_metadata", return_value={})
     @patch("core.report_pdf.load_realtime_quote", return_value=None)
     @patch("core.report_pdf.is_vietnam_trading_session", return_value=True)
     def test_does_not_substitute_history_for_current_price_in_session(
-        self, _session, _quote, _metadata, _apply_metadata
+        self, _session, _quote
     ):
         refreshed = refresh_stock_report_quote(
             self.report_data, database_path="unused.db"
@@ -128,12 +131,10 @@ class ReportQuoteSelectionTests(unittest.TestCase):
         self.assertEqual(refreshed["technical_metrics"][0]["value"], "Chờ realtime")
         self.assertIn("không hiển thị giá lịch sử thay thế", refreshed["price_source"])
 
-    @patch("core.report_pdf._apply_company_metadata", side_effect=lambda report, _: report)
-    @patch("core.report_pdf.load_company_metadata", return_value={})
     @patch("core.report_pdf.load_realtime_quote", return_value=None)
     @patch("core.report_pdf.is_vietnam_trading_session", return_value=False)
     def test_uses_latest_close_outside_trading_session(
-        self, _session, _quote, _metadata, _apply_metadata
+        self, _session, _quote
     ):
         refreshed = refresh_stock_report_quote(
             self.report_data, database_path="unused.db"
@@ -142,6 +143,113 @@ class ReportQuoteSelectionTests(unittest.TestCase):
         self.assertEqual(refreshed["data_as_of"], "09/10/2026")
         self.assertEqual(refreshed["technical_metrics"][0]["value"], "100,000 đ")
         self.assertIn("ngoài giờ giao dịch", refreshed["price_source"])
+
+
+class StalePriceHistoryRefreshTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = TemporaryDirectory()
+        self.database_path = Path(self.temp_dir.name) / "market_data.db"
+        with closing(sqlite3.connect(self.database_path)) as connection:
+            connection.execute(
+                """
+                CREATE TABLE historical_ohlcv (
+                    symbol TEXT, date TEXT, open REAL, high REAL, low REAL,
+                    close REAL, volume REAL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE technical_indicators (
+                    symbol TEXT, date TEXT, MA20 REAL, MA50 REAL, RSI14 REAL,
+                    MACD REAL, MACD_signal REAL, MACD_hist REAL
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO historical_ohlcv VALUES "
+                "('HPG', '2026-10-09', 20, 21, 19, 20, 1000)"
+            )
+            connection.execute(
+                "INSERT INTO technical_indicators VALUES "
+                "('HPG', '2026-10-09', 20, 19, 55, 1, 0.5, 0.5)"
+            )
+            connection.commit()
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_updates_stale_history_to_last_completed_market_date(self):
+        def save_latest(symbol, target_date):
+            self.assertEqual(symbol, "HPG")
+            self.assertEqual(target_date, date(2026, 10, 13))
+            with closing(sqlite3.connect(self.database_path)) as connection:
+                connection.execute(
+                    "INSERT INTO historical_ohlcv VALUES "
+                    "('HPG', '2026-10-13', 20, 22, 20, 21, 2000)"
+                )
+                connection.commit()
+            return "updated"
+
+        updater_module = ModuleType(
+            "stock_bot.data_pipeline.update_history"
+        )
+
+        class FakeUpdater:
+            @staticmethod
+            def get_last_completed_trading_date():
+                return date(2026, 10, 13)
+
+            def __init__(self, **_kwargs):
+                pass
+
+            def update_symbol(self, symbol, target_date):
+                return save_latest(symbol, target_date)
+
+            def close(self):
+                pass
+
+        updater_module.HistoricalUpdater = FakeUpdater
+        with patch.dict(sys.modules, {
+            "stock_bot.data_pipeline.update_history": updater_module
+        }):
+            history = load_price_history("HPG", self.database_path)
+
+        self.assertEqual(history.iloc[-1]["date"].strftime("%Y-%m-%d"), "2026-10-13")
+        self.assertEqual(history.iloc[-1]["close"], 21)
+        self.assertNotIn("refresh_error", history.attrs)
+
+    def test_surfaces_failed_history_update_and_keeps_last_known_data(self):
+        updater_module = ModuleType(
+            "stock_bot.data_pipeline.update_history"
+        )
+
+        class FakeUpdater:
+            @staticmethod
+            def get_last_completed_trading_date():
+                return date(2026, 10, 13)
+
+            def __init__(self, **_kwargs):
+                pass
+
+            def update_symbol(self, _symbol, _target_date):
+                return "no_data"
+
+            def close(self):
+                pass
+
+        updater_module.HistoricalUpdater = FakeUpdater
+        with patch.dict(sys.modules, {
+            "stock_bot.data_pipeline.update_history": updater_module
+        }):
+            history = load_price_history("HPG", self.database_path)
+
+        self.assertEqual(history.iloc[-1]["date"].strftime("%Y-%m-%d"), "2026-10-09")
+        self.assertIn(
+            "Chưa đồng bộ được giá đóng cửa đến 13/10/2026",
+            history.attrs["refresh_error"],
+        )
+        self.assertIn("trạng thái cập nhật: no_data", history.attrs["refresh_error"])
 
 
 if __name__ == "__main__":

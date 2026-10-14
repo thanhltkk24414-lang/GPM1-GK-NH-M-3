@@ -68,6 +68,56 @@ def load_price_history(ticker, database_path=None):
     except Exception:
         pass
 
+    history_refresh_error = None
+    if not history.empty:
+        latest_history_date = pd.to_datetime(
+            history["date"], errors="coerce"
+        ).max()
+        try:
+            from stock_bot.data_pipeline.update_history import HistoricalUpdater
+
+            target_date = HistoricalUpdater.get_last_completed_trading_date()
+            if (
+                target_date is not None
+                and pd.notna(latest_history_date)
+                and latest_history_date.date() < target_date
+            ):
+                updater = HistoricalUpdater(
+                    db_path=str(database_path),
+                    symbols_path=str(PROJECT_ROOT / "data" / "symbols.csv"),
+                    request_delay=0,
+                )
+                try:
+                    update_status = updater.update_symbol(ticker, target_date)
+                finally:
+                    updater.close()
+
+                with closing(sqlite3.connect(database_path)) as connection:
+                    history = pd.read_sql_query(
+                        history_query, connection, params=(ticker.upper(),)
+                    )
+                    indicators = pd.read_sql_query(
+                        indicators_query, connection, params=(ticker.upper(),)
+                    )
+                updated_date = pd.to_datetime(
+                    history["date"], errors="coerce"
+                ).max()
+                if pd.isna(updated_date) or updated_date.date() < target_date:
+                    latest_date_text = (
+                        updated_date.strftime("%d/%m/%Y")
+                        if pd.notna(updated_date)
+                        else "không có"
+                    )
+                    history_refresh_error = (
+                        f"Chưa đồng bộ được giá đóng cửa đến {target_date:%d/%m/%Y} "
+                        f"(dữ liệu hiện có đến {latest_date_text}; trạng thái cập nhật: "
+                        f"{update_status})."
+                    )
+        except Exception as exc:
+            history_refresh_error = (
+                f"Không thể cập nhật lịch sử giá cho {ticker.upper()}: {exc}"
+            )
+
     if history.empty:
         # Nếu chưa có lịch sử, tự động tải
         try:
@@ -149,7 +199,10 @@ def load_price_history(ticker, database_path=None):
     history = history.dropna(subset=["date", "close"]).sort_values("date")
     if history.empty:
         raise ValueError(f"Mã {ticker} không có dữ liệu giá hợp lệ trong database.")
-    return history.reset_index(drop=True)
+    history = history.reset_index(drop=True)
+    if history_refresh_error:
+        history.attrs["refresh_error"] = history_refresh_error
+    return history
 
 
 def load_symbol_metadata(ticker, listing_path=None):

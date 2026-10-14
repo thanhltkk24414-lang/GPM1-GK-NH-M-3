@@ -162,8 +162,7 @@ def load_or_fetch_company_metadata(ticker, exchange=None):
     """Use cached metadata or fetch just the requested ticker and cache it."""
     ticker = str(ticker).strip().upper()
     metadata = load_company_metadata(ticker)
-    required_fields = ("industry", "shares_outstanding")
-    if all(metadata.get(field) is not None for field in required_fields):
+    if metadata.get("industry") is not None:
         return metadata, None
 
     errors = []
@@ -194,10 +193,19 @@ def load_or_fetch_company_metadata(ticker, exchange=None):
         }
         if not merged.get("exchange"):
             merged["exchange"] = exchange
-        if merged.get("shares_outstanding") is not None:
+        if any(
+            merged.get(field) is not None
+            for field in (
+                "industry",
+                "market_cap",
+                "shares_outstanding",
+                "company_name",
+            )
+        ):
             _save_metadata([merged])
-            return merged, None
-        errors.append(f"{source}: hồ sơ không có số cổ phiếu lưu hành.")
+            if merged.get("industry") is not None:
+                return merged, None
+        errors.append(f"{source}: hồ sơ không có thông tin ngành.")
 
     error_message = " | ".join(errors)
     return metadata, (

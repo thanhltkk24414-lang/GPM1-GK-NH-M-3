@@ -29,10 +29,7 @@ if __package__:
         load_realtime_quote,
         load_symbol_metadata,
     )
-    from .company_metadata import (
-        load_company_metadata,
-        load_or_fetch_company_metadata,
-    )
+    from .company_metadata import load_or_fetch_company_metadata
     from .news import fetch_stock_news
     from .scoring import get_recommendation, to_report_context
 else:
@@ -42,7 +39,7 @@ else:
         load_realtime_quote,
         load_symbol_metadata,
     )
-    from company_metadata import load_company_metadata, load_or_fetch_company_metadata
+    from company_metadata import load_or_fetch_company_metadata
     from news import fetch_stock_news
     from scoring import get_recommendation, to_report_context
 
@@ -62,6 +59,32 @@ def _format_indicator(value, suffix=""):
 def _score_value(value):
     value = pd.to_numeric(value, errors="coerce")
     return float(value) if pd.notna(value) else None
+
+
+def _price_to_vnd(value):
+    if isinstance(value, (int, float)):
+        price = float(value)
+    else:
+        text = str(value).replace("đ", "").replace(" ", "").strip()
+        if not text or text in {"-", "N/A", "None"}:
+            return None
+        if "." in text and "," in text:
+            text = text.replace(".", "").replace(",", ".")
+        elif "," in text:
+            decimal_places = len(text.rsplit(",", 1)[-1])
+            text = text.replace(",", "." if decimal_places <= 2 else "")
+        elif "." in text:
+            decimal_places = len(text.rsplit(".", 1)[-1])
+            if decimal_places == 3:
+                text = text.replace(".", "")
+        try:
+            price = float(text)
+        except ValueError:
+            return None
+
+    if 0 < price < 1000:
+        price *= 1000
+    return price if price > 0 else None
 
 
 def _industry_in_vietnamese(industry):
@@ -691,16 +714,36 @@ def _load_financial_data(ticker, workbook_path, fetch_missing=False):
                 (("net_interest_income",), "Thu nhập lãi thuần", "billions"),
                 (("net_fee_and_commission_income",), "Lãi thuần từ hoạt động dịch vụ", "billions"),
                 (("profit_before_tax",), "Lợi nhuận trước thuế", "billions"),
-                (("net_profit", "net_profit_atttributable_to_the_equity_holders_of_the_bank"), "Lợi nhuận sau thuế", "billions"),
+                ((
+                    "net_profit",
+                    "net_profit_atttributable_to_the_equity_holders_of_the_bank",
+                    "net_profit_attributable_to_the_equity_holders_of_the_bank",
+                ), "Lợi nhuận sau thuế", "billions"),
             ],
             "balance_sheet": [
                 (("total_assets",), "Tổng tài sản", "billions"),
+                (("total_liabilities",), "Nợ phải trả", "billions"),
+                (
+                    (
+                        "owners_equity_2",
+                        "owners_equity_3",
+                        "owners_equity",
+                        "owner_equity",
+                        "total_equity",
+                        "capital_and_reserves",
+                        "equity",
+                    ),
+                    "Vốn chủ sở hữu",
+                    "billions",
+                ),
                 (("loans_advances_and_finance_leases_to_customers", "loans_advances_and_finance_leases_to_customers_2"), "Cho vay khách hàng", "billions"),
                 (("deposits_from_customers",), "Tiền gửi khách hàng", "billions"),
                 (("demand_deposits", "deposits_from_customers_demand"), "CASA / tiền gửi không kỳ hạn", "billions"),
             ],
             "cash_flow": [
-                (("operating_cash_flow",), "Lưu chuyển tiền từ HĐKD", "billions"),
+                (("operating_cash_flow",), "Lưu chuyển tiền thuần từ hoạt động kinh doanh", "billions"),
+                (("investing_cash_flow",), "Lưu chuyển tiền thuần từ hoạt động đầu tư", "billions"),
+                (("financing_cash_flow",), "Lưu chuyển tiền thuần từ hoạt động tài chính", "billions"),
             ],
             "ratio": [
                 (("trailing_eps",), "EPS (đồng/cổ phiếu)", "currency"),
@@ -721,7 +764,13 @@ def _load_financial_data(ticker, workbook_path, fetch_missing=False):
                 (("revenue", "net_revenue", "total_revenue", "net_sales"), "Doanh thu thuần", "billions"),
                 (("gross_profit",), "Lợi nhuận gộp", "billions"),
                 (("profit_before_tax",), "Lợi nhuận trước thuế", "billions"),
-                (("net_profit", "net_profit_after_tax", "profit_after_tax"), "Lợi nhuận sau thuế", "billions"),
+                ((
+                    "net_profit",
+                    "net_profit_after_tax",
+                    "profit_after_tax",
+                    "profit_after_tax_for_shareholders_of_parent_company",
+                    "profit_after_tax_for_shareholders_of_the_parent_company",
+                ), "Lợi nhuận sau thuế hợp nhất", "billions"),
             ],
             "balance_sheet": [
                 (("total_assets",), "Tổng tài sản", "billions"),
@@ -731,7 +780,9 @@ def _load_financial_data(ticker, workbook_path, fetch_missing=False):
                 (("long_term_borrowings_and_financial_leases", "long_term_borrowings"), "Nợ vay tài chính dài hạn", "billions"),
             ],
             "cash_flow": [
-                (("operating_cash_flow",), "Lưu chuyển tiền từ HĐKD", "billions"),
+                (("operating_cash_flow",), "Lưu chuyển tiền thuần từ hoạt động kinh doanh", "billions"),
+                (("investing_cash_flow",), "Lưu chuyển tiền thuần từ hoạt động đầu tư", "billions"),
+                (("financing_cash_flow",), "Lưu chuyển tiền thuần từ hoạt động tài chính", "billions"),
             ],
             "ratio": [
                 (("trailing_eps",), "EPS (đồng/cổ phiếu)", "currency"),
@@ -772,6 +823,31 @@ def _load_financial_data(ticker, workbook_path, fetch_missing=False):
         for item_ids, label, value_type in items:
             raw_values, _ = statement_series(sheet_name, item_ids)
             if (
+                bank_company
+                and sheet_name == "balance_sheet"
+                and item_ids == ("total_liabilities",)
+            ):
+                assets, _ = statement_series("balance_sheet", ("total_assets",))
+                equity, _ = statement_series(
+                    "balance_sheet",
+                    (
+                        "owners_equity_2",
+                        "owners_equity_3",
+                        "owners_equity",
+                        "owner_equity",
+                        "total_equity",
+                        "capital_and_reserves",
+                        "equity",
+                    ),
+                )
+                if assets is not None and equity is not None:
+                    derived_liabilities = assets.reindex(years) - equity.reindex(years)
+                    raw_values = (
+                        raw_values.reindex(years).combine_first(derived_liabilities)
+                        if raw_values is not None
+                        else derived_liabilities
+                    )
+            if (
                 set(item_ids).intersection(optional_item_ids)
                 and (raw_values is None or not raw_values.notna().any())
             ):
@@ -803,6 +879,8 @@ def _load_financial_data(ticker, workbook_path, fetch_missing=False):
                     f"{value:.2f}x" if pd.notna(value) else "N/A"
                     for value in raw_values
                 ]
+            if sheet_name == "cash_flow":
+                formatted_values.reverse()
             rows.append({"label": label, "values": formatted_values})
             if sheet_name == "ratio":
                 ratio_values[item_ids[0]] = raw_values.get(latest_year)
@@ -834,15 +912,27 @@ def _load_financial_data(ticker, workbook_path, fetch_missing=False):
             "net_profit",
             "net_profit_after_tax",
             "profit_after_tax",
-            "net_income",
             "profit_after_tax_for_shareholders_of_parent_company",
+            "profit_after_tax_for_shareholders_of_the_parent_company",
+            "net_income",
             "net_profit_atttributable_to_the_equity_holders_of_the_bank",
         ),
     )
     eps_series, _ = statement_series("ratio", ("trailing_eps",))
+    bvps_series, _ = statement_series(
+        "ratio", ("book_value_per_share_bvps",)
+    )
     equity_series, _ = statement_series(
         "balance_sheet",
-        ("owners_equity_2", "owners_equity_3", "owners_equity", "equity"),
+        (
+            "owners_equity_2",
+            "owners_equity_3",
+            "owners_equity",
+            "owner_equity",
+            "total_equity",
+            "capital_and_reserves",
+            "equity",
+        ),
     )
     if equity_series is None and not bank_company:
         assets_series, _ = statement_series("balance_sheet", ("total_assets",))
@@ -999,13 +1089,34 @@ def _load_financial_data(ticker, workbook_path, fetch_missing=False):
         previous_eps = eps_series.get(previous_year)
         if pd.notna(current_eps) and pd.notna(previous_eps) and previous_eps:
             ratio_values["eps_growth"] = current_eps / previous_eps - 1
+    operating_cash_flow, _ = statement_series(
+        "cash_flow", ("operating_cash_flow",)
+    )
+    if operating_cash_flow is not None:
+        latest_cash_flow = operating_cash_flow.get(latest_year)
+        if pd.notna(latest_cash_flow):
+            ratio_values["operating_cash_flow"] = (
+                latest_cash_flow / 1_000_000_000
+            )
     if bank_company:
         revenue_series, income_label = statement_series(
             "income_statement", ("net_interest_income",)
         )
         income_label = "Thu nhập lãi thuần"
+        profit_series, _ = statement_series(
+            "income_statement",
+            (
+                "net_profit",
+                "net_profit_atttributable_to_the_equity_holders_of_the_bank",
+                "net_profit_attributable_to_the_equity_holders_of_the_bank",
+            ),
+        )
     historical_pe, _ = statement_series("ratio", ("pe_ratio",))
     historical_pb, _ = statement_series("ratio", ("pb_ratio",))
+    historical_eps, _ = statement_series("ratio", ("trailing_eps",))
+    historical_bvps, _ = statement_series(
+        "ratio", ("book_value_per_share_bvps",)
+    )
     def yoy_percent(series):
         if series is None:
             return {}
@@ -1053,6 +1164,16 @@ def _load_financial_data(ticker, workbook_path, fetch_missing=False):
                 if historical_pb is not None
                 else []
             ),
+            "EPS": (
+                [float(value) if pd.notna(value) else None for value in historical_eps]
+                if historical_eps is not None
+                else []
+            ),
+            "BVPS": (
+                [float(value) if pd.notna(value) else None for value in historical_bvps]
+                if historical_bvps is not None
+                else []
+            ),
         },
     }
     return (
@@ -1073,11 +1194,30 @@ def load_stock_report_data(
     database_path=None,
     fetch_missing_financials=True,
 ):
-    """Build report data from the shared market database and fundamental exports."""
-    project_root = Path(__file__).resolve().parent.parent
+    """
+    Load report context, market history/quotes, and financial statements.
+    """
     ticker = str(ticker).strip().upper()
     if not ticker:
         raise ValueError("Vui lòng nhập mã cổ phiếu.")
+
+    report_data = {}
+    project_root = Path(__file__).resolve().parent.parent
+    for json_path in (
+        project_root / "data" / f"{ticker}.json",
+        project_root / "data" / f"sample_{ticker}.json",
+        project_root / "data" / f"sample_context_{ticker}.json",
+        project_root / "data" / f"sample_output_{ticker}.json",
+    ):
+        if not json_path.is_file():
+            continue
+        try:
+            with json_path.open(encoding="utf-8") as json_file:
+                payload = json.load(json_file)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            report_data.update(payload)
 
     if csv_path is not None:
         csv_path = Path(csv_path)
@@ -1098,59 +1238,66 @@ def load_stock_report_data(
         for column in ("open", "high", "low", "close", "volume"):
             history[column] = pd.to_numeric(history[column], errors="coerce")
         history = history.dropna(subset=["date", "close"]).sort_values("date")
-        try:
-            price_history_source = str(csv_path.relative_to(project_root))
-        except ValueError:
-            price_history_source = str(csv_path)
+        price_history_source = str(csv_path)
     else:
         history = load_price_history(ticker, database_path=database_path)
         price_history_source = "data/market_data.db: historical_ohlcv + technical_indicators"
-
+    price_history_error = history.attrs.get("refresh_error")
     if history.empty:
         raise ValueError(f"Mã {ticker} không có dữ liệu giá hợp lệ.")
 
     financial_path = (
-        financial_path
+        Path(financial_path)
         if financial_path is not None
         else project_root / "data" / "processed" / "tv2_financial_data.xlsx"
     )
-    (
-        financial_years,
-        financial_sections,
-        financial_ratios,
-        financial_chart,
-        financial_chart_data,
-        financial_source,
-        financial_error,
-    ) = _load_financial_data(
-        ticker,
-        financial_path,
-        fetch_missing=fetch_missing_financials,
-    )
+    if not financial_path.is_absolute():
+        financial_path = project_root / financial_path
+    financial_error = None
+    try:
+        (
+            financial_years,
+            financial_sections,
+            financial_ratios,
+            financial_chart,
+            financial_chart_data,
+            financial_source,
+            financial_error,
+        ) = _load_financial_data(
+            ticker,
+            financial_path,
+            fetch_missing=fetch_missing_financials,
+        )
+    except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
+        financial_years = []
+        financial_sections = []
+        financial_ratios = {}
+        financial_chart = ""
+        financial_chart_data = {}
+        financial_source = None
+        financial_error = str(exc)
 
     latest = history.iloc[-1]
-    latest_date = latest["date"]
+    latest_date = pd.to_datetime(latest["date"])
+    market_open = is_vietnam_trading_session()
     quote_error = None
     quote = None
-    market_open = is_vietnam_trading_session()
-    if database_path is None:
-        database_path = project_root / "data" / "market_data.db"
+    quote_database = database_path or project_root / "data" / "market_data.db"
     try:
-        quote = load_realtime_quote(ticker, database_path=database_path)
+        quote = load_realtime_quote(ticker, database_path=quote_database)
     except RuntimeError as exc:
         quote_error = str(exc)
-    if quote is None and quote_error is None and market_open:
-        quote_error = f"Không tìm thấy báo giá realtime cho mã {ticker}."
 
-    recent_history = history.loc[
-        history["date"] >= latest_date - pd.Timedelta(days=365)
-    ]
-    volume_20d = history["volume"].dropna().tail(20)
-    quote_price = quote.get("price") if quote else None
-    quote_price = _score_value(quote_price)
-    close = quote_price if quote_price is not None else float(latest["close"])
-    waiting_for_realtime = market_open and quote is None
-    current_price = "Chờ realtime" if waiting_for_realtime else _format_price(close)
+    quote_price = _score_value(quote.get("price")) if quote else None
+    waiting_for_realtime = market_open and quote_price is None
+    close = quote_price if quote_price is not None else _score_value(latest["close"])
+    current_price = (
+        "Chờ realtime"
+        if waiting_for_realtime
+        else _format_price(close)
+        if close is not None
+        else "N/A"
+    )
     quote_timestamp = quote.get("timestamp") if quote else None
     if quote_timestamp:
         try:
@@ -1161,469 +1308,423 @@ def load_stock_report_data(
             quote_date = quote_timestamp
     else:
         quote_date = None
-
     quote_source = quote.get("source") if quote else None
     if quote:
-        price_source = (
-            f"{quote_source} lúc {quote_date}; "
-            "đơn vị quy đổi sang đồng/cổ phiếu"
-        )
+        price_source = f"{quote_source} lúc {quote_date}; đơn vị đồng/cổ phiếu"
     elif waiting_for_realtime:
         price_source = (
             "Đang trong giờ giao dịch nhưng chưa có quote realtime; "
-            "không hiển thị giá lịch sử thay thế, đơn vị đồng/cổ phiếu"
+            "không hiển thị giá lịch sử thay thế"
         )
     else:
         price_source = (
-            f"Giá đóng cửa lịch sử {latest_date:%d/%m/%Y}; "
-            "ngoài giờ giao dịch, đơn vị đồng/cổ phiếu"
+            f"Giá đóng cửa lịch sử {latest_date:%d/%m/%Y}; ngoài giờ giao dịch"
         )
-    sources = [price_history_source]
-    if quote_source:
-        sources.append(f"{quote_source} ({quote_date})")
-    if financial_sections:
-        sources.append(financial_source)
-    news_data = fetch_stock_news(ticker, limit=3, period="w")
-    if news_data.get("source"):
-        sources.append(news_data["source"])
 
-    symbol_metadata = load_symbol_metadata(ticker)
-    company_metadata, company_metadata_error = load_or_fetch_company_metadata(
-        ticker,
-        exchange=symbol_metadata.get("exchange"),
-    )
-    if company_metadata.get("source"):
-        sources.append(company_metadata["source"])
-    company_name = (
-        company_metadata.get("company_name")
-        or (quote.get("company_name") if quote else None)
-        or latest.get("organ_name")
-    )
-    company_name = str(company_name) if pd.notna(company_name) else ticker
-    exchange = (
-        (quote.get("exchange") if quote else None)
-        or company_metadata.get("exchange")
-        or symbol_metadata.get("exchange")
-        or latest.get("exchange")
-    )
-    exchange = str(exchange) if pd.notna(exchange) else "Chưa có dữ liệu"
-    company_market_cap = company_metadata.get("market_cap")
-    market_cap_is_estimated = False
-    if (
-        company_market_cap is None
-        and company_metadata.get("shares_outstanding") is not None
-        and close > 0
-        and not waiting_for_realtime
-    ):
-        company_market_cap = close * 1000 * float(
-            company_metadata["shares_outstanding"]
-        )
-        market_cap_is_estimated = True
+    close_series = pd.to_numeric(history["close"], errors="coerce")
+    stored_indicators = {
+        column: pd.to_numeric(history[column], errors="coerce")
+        for column in ("MA20", "MA50", "RSI14", "MACD", "MACD_signal")
+        if column in history
+    }
+    history["MA10"] = close_series.rolling(10, min_periods=10).mean()
+    history["MA20"] = close_series.rolling(20, min_periods=20).mean()
+    history["MA50"] = close_series.rolling(50, min_periods=50).mean()
+    history["MA200"] = close_series.rolling(200, min_periods=200).mean()
 
-    if quote:
-        technical_points = [
-            f"Giá realtime: {_format_price(close)}/cổ phiếu "
-            f"(cập nhật {quote_date})."
-        ]
-    elif waiting_for_realtime:
-        technical_points = [
-            "Chưa nhận được giá realtime; không dùng giá lịch sử thay cho giá hiện tại."
-        ]
-    else:
-        technical_points = [
-            f"Giá đóng cửa ngày {latest_date:%d/%m/%Y}: "
-            f"{_format_price(close)}/cổ phiếu."
-        ]
-    for column, label in (("MA20", "MA20"), ("MA50", "MA50"), ("RSI14", "RSI 14")):
-        value = pd.to_numeric(latest.get(column), errors="coerce")
-        formatted = _format_indicator(value)
-        if formatted is not None:
-            technical_points.append(f"{label}: {formatted}.")
-    moving_average = pd.to_numeric(latest.get("MA20"), errors="coerce")
-    if pd.notna(moving_average):
-        relation = "trên" if close >= moving_average else "dưới"
-        price_label = (
-            "Giá hiện tại"
-            if quote
-            else "Giá lịch sử gần nhất"
-            if waiting_for_realtime
-            else "Giá đóng cửa"
-        )
-        technical_points.append(f"{price_label} đang {relation} MA20.")
+    price_change_series = close_series.pct_change()
+    change = close_series.diff()
+    average_gain = change.clip(lower=0).ewm(
+        alpha=1 / 14, min_periods=14, adjust=False
+    ).mean()
+    average_loss = -change.clip(upper=0).ewm(
+        alpha=1 / 14, min_periods=14, adjust=False
+    ).mean()
+    relative_strength = average_gain / average_loss.replace(0, float("nan"))
+    rsi_series = 100 - 100 / (1 + relative_strength)
+    rsi_series = rsi_series.mask(
+        average_loss.eq(0) & average_gain.gt(0), 100
+    ).mask(average_loss.eq(0) & average_gain.eq(0), 50)
+    history["RSI14"] = rsi_series
 
-    prior_volumes = history.loc[
-        history["date"] < latest_date, "volume"
-    ].dropna().tail(20)
-    average_prior_volume = prior_volumes.mean() if not prior_volumes.empty else None
-    volume_ratio = (
-        float(latest["volume"] / average_prior_volume)
-        if average_prior_volume and pd.notna(latest["volume"])
+    ema_fast = close_series.ewm(span=12, min_periods=12, adjust=False).mean()
+    ema_slow = close_series.ewm(span=26, min_periods=26, adjust=False).mean()
+    history["MACD"] = ema_fast - ema_slow
+    history["MACD_signal"] = history["MACD"].ewm(
+        span=9, min_periods=9, adjust=False
+    ).mean()
+    for column, stored_values in stored_indicators.items():
+        history[column] = history[column].fillna(stored_values)
+
+    history["volume"] = pd.to_numeric(history["volume"], errors="coerce")
+    previous_volume_average = history["volume"].rolling(20, min_periods=20).mean().shift(1)
+    history["volume_ratio"] = history["volume"] / previous_volume_average.replace(0, float("nan"))
+    history["prior_20d_high"] = (
+        pd.to_numeric(history["high"], errors="coerce")
+        .rolling(20, min_periods=20)
+        .max()
+        .shift(1)
+    )
+    history["support_60d"] = (
+        pd.to_numeric(history["low"], errors="coerce")
+        .rolling(60, min_periods=60)
+        .min()
+        .shift(1)
+    )
+    history["resistance_60d"] = (
+        pd.to_numeric(history["high"], errors="coerce")
+        .rolling(60, min_periods=60)
+        .max()
+        .shift(1)
+    )
+    latest = history.iloc[-1]
+    previous = history.iloc[-2] if len(history) > 1 else None
+    rsi = latest.get("RSI14")
+    signal_close = _score_value(latest["close"])
+    support_60d = _score_value(latest.get("support_60d"))
+    resistance_60d = _score_value(latest.get("resistance_60d"))
+    support_distance_pct = (
+        signal_close / support_60d - 1
+        if signal_close and support_60d and support_60d > 0
         else None
     )
+    resistance_distance_pct = (
+        resistance_60d / signal_close - 1
+        if signal_close and resistance_60d and resistance_60d > 0
+        else None
+    )
+    if previous is not None and pd.notna(latest.get("MA50")) and pd.notna(
+        latest.get("MA200")
+    ) and pd.notna(previous.get("MA50")) and pd.notna(previous.get("MA200")):
+        if previous["MA50"] <= previous["MA200"] and latest["MA50"] > latest["MA200"]:
+            ma50_ma200_cross = "golden_cross"
+        elif previous["MA50"] >= previous["MA200"] and latest["MA50"] < latest["MA200"]:
+            ma50_ma200_cross = "death_cross"
+        else:
+            ma50_ma200_cross = "none"
+    else:
+        ma50_ma200_cross = None
 
-    summary_parts = list(technical_points)
-    for item_id, label, suffix in (
-        ("roe", "ROE", "%"),
-        ("pe_ratio", "P/E", "x"),
-        ("pb_ratio", "P/B", "x"),
+    def metric_value(value, suffix=""):
+        numeric_value = pd.to_numeric(value, errors="coerce")
+        return (
+            f"{numeric_value:,.2f}{suffix}"
+            if pd.notna(numeric_value)
+            else "N/A"
+        )
+
+    volume_20d = pd.to_numeric(history["volume"], errors="coerce").dropna().tail(20)
+    recent_history = history.loc[
+        history["date"] >= latest_date - pd.Timedelta(days=365)
+    ]
+
+    financial_metrics = dict(report_data.get("fundamental_metrics") or {})
+    for source_key, target_key in (
+        ("pe_ratio", "pe"),
+        ("pb_ratio", "pb"),
+        ("trailing_eps", "eps"),
+        ("book_value_per_share_bvps", "bvps"),
+        ("roe", "roe"),
+        ("roa", "roa"),
     ):
-        value = financial_ratios.get(item_id)
+        value = financial_ratios.get(source_key)
         if value is not None and pd.notna(value):
-            summary_parts.append(
-                f"{label} năm {financial_years[-1]}: {value:.2f}{suffix}."
-            )
+            financial_metrics[target_key] = float(value)
+    beta_value = financial_ratios.get("beta")
+    if beta_value is None or pd.isna(beta_value):
+        beta_value = financial_metrics.get("beta", report_data.get("beta"))
+    if beta_value is not None and pd.notna(pd.to_numeric(beta_value, errors="coerce")):
+        beta_value = float(beta_value)
+        financial_metrics["beta"] = beta_value
+        report_data["beta"] = f"{beta_value:.2f}"
 
-    report_data = {
-        "ticker": ticker,
-        "company_name": company_name,
-        "report_date": date.today().strftime("%d/%m/%Y"),
-        "recommendation": "—",
-        "target_price": "—",
-        "upside": "—",
-        "exchange": exchange,
-        "industry": _industry_in_vietnamese(company_metadata.get("industry"))
-        or "Chưa có dữ liệu",
-        "current_price": current_price,
-        "investment_horizon": "12 tháng",
-        "price_chart": _price_chart_data_uri(history, ticker, close if quote else None),
-        "price_source": price_source,
-        "market_cap": (
-            (
-                f"{company_market_cap / 1_000_000_000:,.2f} tỷ đồng"
-                + (" (ước tính theo giá hiện tại)" if market_cap_is_estimated else "")
+    existing_fund = report_data.get("fund")
+    fundamental_data = dict(existing_fund) if isinstance(existing_fund, dict) else {}
+    existing_tech = report_data.get("tech")
+    technical_data = dict(existing_tech) if isinstance(existing_tech, dict) else {}
+    for source_key, target_key in (
+        ("pe_ratio", "PE"),
+        ("pb_ratio", "PB"),
+        ("trailing_eps", "EPS"),
+        ("book_value_per_share_bvps", "BVPS"),
+        ("roe", "ROE"),
+        ("roa", "ROA"),
+    ):
+        value = financial_ratios.get(source_key)
+        if value is not None and pd.notna(value):
+            normalized_value = float(value)
+            if target_key in {"ROE", "ROA"}:
+                normalized_value /= 100
+            fundamental_data[target_key] = normalized_value
+    for source_key, target_key in (
+        ("revenue_growth", "revenue_growth"),
+        ("eps_growth", "EPS_growth"),
+        ("profit_growth", "profit_growth"),
+        ("debt_to_equity", "debt_to_equity"),
+        ("current_ratio", "current_ratio"),
+        ("operating_cash_flow", "operating_cash_flow"),
+    ):
+        value = financial_ratios.get(source_key)
+        if value is not None and pd.notna(value):
+            fundamental_data[target_key] = float(value)
+    for source_key in (
+        "gross_margin",
+        "net_margin",
+        "net_interest_margin_nim",
+        "npl",
+        "loan_loss_coverage_ratio",
+        "capital_adequacy_ratio",
+    ):
+        value = financial_ratios.get(source_key)
+        if value is not None and pd.notna(value):
+            target_key = (
+                "net_interest_margin"
+                if source_key == "net_interest_margin_nim"
+                else source_key
             )
-            if company_market_cap is not None
-            else "Chưa có dữ liệu"
+            fundamental_data[target_key] = float(value) / 100
+    fundamental_data["valuation_type"] = financial_chart_data.get(
+        "company_type", "non-bank"
+    )
+    historical_valuation = financial_chart_data.get("historical_valuation", {})
+    fundamental_data["historical_PE"] = historical_valuation.get("PE", [])
+    fundamental_data["historical_PB"] = historical_valuation.get("PB", [])
+    fundamental_data["historical_EPS"] = historical_valuation.get("EPS", [])
+    fundamental_data["historical_BVPS"] = historical_valuation.get("BVPS", [])
+    net_profit_by_year = financial_chart_data.get("net_profit", {})
+    if net_profit_by_year:
+        latest_financial_year = str(max(map(int, net_profit_by_year)))
+        fundamental_data["net_profit"] = net_profit_by_year[latest_financial_year]
+        fundamental_data["net_profit_year"] = latest_financial_year
+
+    news_feed = fetch_stock_news(ticker, limit=8, period="d")
+    report_data.update({
+        "ticker": ticker,
+        "current_price": current_price,
+        "price_source": price_source,
+        "data_as_of": quote_date or latest_date.strftime("%d/%m/%Y"),
+        "price_history": history,
+        "price_history_source": price_history_source,
+        "price_history_error": price_history_error,
+        "price_chart": _price_chart_data_uri(
+            history, ticker, close if quote else None
         ),
-        "shares_outstanding": (
-            f"{company_metadata['shares_outstanding'] / 1_000_000:,.2f} triệu CP"
-            if company_metadata.get("shares_outstanding")
-            else "Chưa có dữ liệu"
+        "technical_metrics": [
+            {"label": "Giá gần nhất", "value": current_price},
+            {"label": "Giá đóng cửa phiên", "value": metric_value(signal_close, " nghìn đ")},
+            {"label": "MA10", "value": metric_value(latest.get("MA10"), " nghìn đ")},
+            {"label": "MA20", "value": metric_value(latest.get("MA20"), " nghìn đ")},
+            {"label": "MA50", "value": metric_value(latest.get("MA50"), " nghìn đ")},
+            {"label": "MA200", "value": metric_value(latest.get("MA200"), " nghìn đ")},
+            {"label": "RSI (14)", "value": metric_value(rsi)},
+            {"label": "MACD", "value": metric_value(latest.get("MACD"))},
+            {"label": "MACD Signal", "value": metric_value(latest.get("MACD_signal"))},
+            {"label": "Khối lượng / TB20 phiên", "value": metric_value(latest.get("volume_ratio"), "x")},
+        ],
+        "price_52w_range": (
+            f"{_format_price(pd.to_numeric(recent_history['low'], errors='coerce').min())} – "
+            f"{_format_price(pd.to_numeric(recent_history['high'], errors='coerce').max())}"
+            if {"low", "high"}.issubset(recent_history.columns)
+            else "N/A"
         ),
         "avg_volume_20d": (
             f"{volume_20d.mean() / 1_000_000:,.2f} triệu CP"
             if not volume_20d.empty
-            else "—"
+            else "N/A"
         ),
-        "price_52w_range": (
-            f"{_format_price(recent_history['low'].min())} – "
-            f"{_format_price(recent_history['high'].max())}"
-        ),
-        "foreign_ownership": (
-            f"{company_metadata['foreign_ownership']:.2%}"
-            if company_metadata.get("foreign_ownership") is not None
-            else "—"
-        ),
-        "foreign_ownership_limit": (
-            f"{company_metadata['foreign_ownership_limit']:.2%}"
-            if company_metadata.get("foreign_ownership_limit") is not None
-            else "Chưa có dữ liệu"
-        ),
-        "beta": _format_indicator(financial_ratios.get("beta")) or "—",
-        "financial_years": financial_years,
-        "financial_sections": financial_sections,
+        "financial_years": financial_years or report_data.get("financial_years", []),
+        "financial_sections": financial_sections or report_data.get("financial_sections", []),
         "financial_chart": financial_chart,
         "financial_chart_data": financial_chart_data,
-        "fundamental_metrics": {
-            "pe": _score_value(financial_ratios.get("pe_ratio")),
-            "eps": _score_value(financial_ratios.get("trailing_eps")),
-            "source": financial_source,
-        },
-        "metadata_missing": [
-            label
-            for value, label in (
-                (company_metadata.get("industry"), "ngành"),
-                (company_market_cap, "vốn hóa"),
-                (company_metadata.get("shares_outstanding"), "số cổ phiếu lưu hành"),
-            )
-            if value is None or pd.isna(value)
-        ],
-        "company_metadata_source": company_metadata.get("source"),
-        "company_metadata_as_of": company_metadata.get("fetched_at"),
-        "company_metadata_error": company_metadata_error,
-        "technical_metrics": [
-            {"label": "Giá gần nhất", "value": current_price},
-            {"label": "MA20", "value": _format_price(latest.get("MA20"))},
-            {"label": "MA50", "value": _format_price(latest.get("MA50"))},
-            {"label": "RSI 14", "value": _format_indicator(latest.get("RSI14")) or "N/A"},
-            {"label": "MACD", "value": _format_indicator(latest.get("MACD")) or "N/A"},
-            {
-                "label": "MACD Signal",
-                "value": _format_indicator(latest.get("MACD_signal")) or "N/A",
-            },
-            {
-                "label": "MACD Histogram",
-                "value": _format_indicator(latest.get("MACD_hist")) or "N/A",
-            },
-            {
-                "label": "KLGD gần nhất / TB20",
-                "value": f"{volume_ratio:.2f}x" if volume_ratio is not None else "N/A",
-            },
-        ],
+        "financial_ratios": financial_ratios,
+        "fundamental_metrics": financial_metrics,
+        "financial_data_source": (
+            "Báo cáo tài chính đã lưu" if financial_source else None
+        ),
+        "financial_data_error": financial_error,
         "quote_error": quote_error,
-        "quote_is_realtime": quote is not None,
-        "technical_as_of": latest_date.strftime("%d/%m/%Y"),
-        "financial_error": financial_error,
-        "news_status": news_data.get("status", "empty"),
-        "news_error": news_data.get("error"),
-        "news_list": [
-            {
-                "title": item["title"],
-                "url": (
-                    item["url"]
-                    if urlparse(item.get("url") or "").scheme in {"http", "https"}
-                    and urlparse(item.get("url") or "").netloc
-                    else ""
-                ),
-                "date": item.get("published_at") or "",
-                "source": item.get("source") or news_data.get("source") or "",
-                "summary": (
-                    (item.get("summary") or "")[:180].rstrip()
-                    + ("..." if len(item.get("summary") or "") > 180 else "")
-                ),
-            }
-            for item in news_data.get("headlines", [])
-        ],
-        "price_history": history,
-        "investment_thesis": (
-            "Báo cáo sử dụng OHLCV và chỉ báo kỹ thuật từ database thị trường; "
-            "giá realtime được đọc từ cache WebSocket/snapshot khi khả dụng. "
-            + (
-                f"Số liệu cơ bản lấy từ {financial_source}; "
-                "các năm báo cáo theo đúng cột năm nguồn."
-                if financial_sections
-                else f"Hiện chưa có số liệu BCTC cho mã {ticker}."
-            )
-        ),
-        "ai_summary": " ".join(summary_parts),
-        "investment_points": technical_points[1:],
-        "key_risks": [
-            (
-                "Chưa có dữ liệu BCTC cho mã này."
-                if not financial_sections
-                else "Một số chỉ tiêu định giá và thông tin doanh nghiệp chưa có trong dữ liệu đầu vào."
+        "tech": {
+            **technical_data,
+            "symbol": ticker,
+            "close": close if close is not None else _score_value(latest["close"]),
+            "signal_close": signal_close,
+            "current_price": current_price,
+            "MA10": _score_value(latest.get("MA10")),
+            "MA20": _score_value(latest.get("MA20")),
+            "MA50": _score_value(latest.get("MA50")),
+            "MA200": _score_value(latest.get("MA200")),
+            "RSI": _score_value(rsi),
+            "MACD": _score_value(latest.get("MACD")),
+            "MACD_signal": _score_value(latest.get("MACD_signal")),
+            "MACD_hist": (
+                _score_value(latest.get("MACD") - latest.get("MACD_signal"))
+                if pd.notna(latest.get("MACD")) and pd.notna(latest.get("MACD_signal"))
+                else None
             ),
-            "Dữ liệu giá lịch sử và chỉ báo kỹ thuật không đảm bảo kết quả trong tương lai.",
-        ],
-        "analyst_name": "Tổng hợp dữ liệu cổ phiếu",
-        "analyst_contact": "",
-        "data_sources": "; ".join(sources),
-        "data_as_of": (
-            quote_date
-            or ("Chờ realtime" if waiting_for_realtime else latest_date.strftime("%d/%m/%Y"))
-        ),
-    }
-    report_data = _apply_company_metadata(report_data, company_metadata)
-    score_tech = {
-        "symbol": ticker,
-        "as_of": quote_timestamp or latest_date.strftime("%Y-%m-%d"),
-        "source": quote_source or price_history_source,
-        "close": close,
-        "RSI": _score_value(latest.get("RSI14")),
-        "MA20": _score_value(latest.get("MA20")),
-        "MA50": _score_value(latest.get("MA50")),
-        "MACD": _score_value(latest.get("MACD")),
-        "MACD_signal": _score_value(latest.get("MACD_signal")),
-        "volume_ratio": volume_ratio,
-        "low_52w": _score_value(recent_history["low"].min()),
-        "high_52w": _score_value(recent_history["high"].max()),
-    }
-    industry_key = str(company_metadata.get("industry") or "").casefold()
-    valuation_type = (
-        "bank"
-        if financial_chart_data.get("company_type") == "bank"
-        else (
-            "real_estate"
-            if any(
-                marker in industry_key
-                for marker in ("bất động sản", "real estate", "property")
-            )
-            else "non-bank"
-        )
-    )
-    score_fund = {
-        "symbol": ticker,
-        "as_of": financial_years[-1] if financial_years else None,
-        "source": financial_source if financial_sections else None,
-        "PE": _score_value(financial_ratios.get("pe_ratio")),
-        "PB": _score_value(financial_ratios.get("pb_ratio")),
-        "ROE": (
-            _score_value(financial_ratios.get("roe")) / 100
-            if financial_ratios.get("roe") is not None
-            else None
-        ),
-        "ROA": (
-            _score_value(financial_ratios.get("roa")) / 100
-            if financial_ratios.get("roa") is not None
-            else None
-        ),
-        "EPS": _score_value(financial_ratios.get("trailing_eps")),
-        "BVPS": _score_value(financial_ratios.get("book_value_per_share_bvps")),
-        "valuation_type": valuation_type,
-        "historical_PE": financial_chart_data.get("historical_valuation", {}).get("PE", []),
-        "historical_PB": financial_chart_data.get("historical_valuation", {}).get("PB", []),
-        "EPS_growth": _score_value(financial_ratios.get("eps_growth")),
-        "revenue_growth": _score_value(financial_ratios.get("revenue_growth")),
-        "profit_growth": _score_value(financial_ratios.get("profit_growth")),
-        "financial_trend": {
-            "years": financial_chart_data.get("years", []),
-            "income_label": financial_chart_data.get("income_label"),
-            "income_billions": financial_chart_data.get("income", {}),
-            "income_yoy_percent": financial_chart_data.get("income_yoy", {}),
-            "net_profit_billions": financial_chart_data.get("net_profit", {}),
-            "net_profit_yoy_percent": financial_chart_data.get("net_profit_yoy", {}),
-            "company_type": valuation_type,
+            "ma50_ma200_cross": ma50_ma200_cross,
+            "volume_ratio": _score_value(latest.get("volume_ratio")),
+            "price_change_pct": (
+                _score_value(price_change_series.iloc[-1])
+                if len(price_change_series) and pd.notna(price_change_series.iloc[-1])
+                else None
+            ),
+            "breakout_20d": (
+                bool(latest["close"] > latest["prior_20d_high"])
+                if pd.notna(latest.get("prior_20d_high"))
+                else None
+            ),
+            "support_60d": support_60d,
+            "resistance_60d": resistance_60d,
+            "support_distance_pct": support_distance_pct,
+            "resistance_distance_pct": resistance_distance_pct,
+            "signal_as_of": latest_date.strftime("%Y-%m-%d"),
+            "as_of": quote_timestamp or latest_date.strftime("%Y-%m-%d"),
+            "source": quote_source or price_history_source,
         },
-    }
-    scoring_data = {
-        "tech": score_tech,
-        "fund": score_fund,
-        "news": news_data,
-    }
-    report_data = apply_scoring_to_report(report_data, scoring_data)
-    report_data["_scoring_data"] = scoring_data
+        "fund": {
+            **fundamental_data,
+            "symbol": ticker,
+            "source": financial_source or fundamental_data.get("source"),
+        },
+        "news_feed": news_feed,
+        "news_list": news_feed.get("headlines", []),
+    })
+    if financial_sections:
+        report_data["financial_ratios_table"] = [
+            {"label": row["label"], "values": row["values"]}
+            for section in financial_sections
+            if section.get("title") == "CHỈ SỐ TÀI CHÍNH"
+            for row in section.get("rows", [])
+        ]
+
+    report_data["report_date"] = datetime.now().strftime("%d/%m/%Y")
+    if not report_data.get("company_name") or report_data["company_name"] == ticker:
+        report_data["company_name"] = f"Công ty Cổ phần {ticker}"
+    symbol_metadata = load_symbol_metadata(ticker)
+    metadata, metadata_error = load_or_fetch_company_metadata(
+        ticker, exchange=symbol_metadata.get("exchange")
+    )
+    report_data = _apply_company_metadata(report_data, metadata)
+    if (
+        str(report_data.get("exchange", "")).strip().casefold()
+        in {"", "n/a", "none"}
+        and symbol_metadata.get("exchange")
+    ):
+        report_data["exchange"] = symbol_metadata["exchange"]
+    if metadata_error:
+        report_data["company_metadata_error"] = metadata_error
     return report_data
 
 
 def refresh_stock_report_quote(report_data, database_path=None):
-    """Refresh only market-dependent report fields; preserve BCTC and news."""
+    """
+    Refresh market-dependent report fields without replacing financial data.
+    """
     if not isinstance(report_data, dict):
-        raise TypeError("Dữ liệu báo cáo phải là dict.")
+        return report_data
 
-    ticker = str(report_data.get("ticker", "")).strip().upper()
+    refreshed = dict(report_data)
+    ticker = str(refreshed.get("ticker", "")).strip().upper()
     if not ticker:
         raise ValueError("Báo cáo phải có mã cổ phiếu.")
 
-    history = report_data.get("price_history")
-    if not isinstance(history, pd.DataFrame) or history.empty:
-        raise ValueError("Báo cáo không có dữ liệu giá lịch sử để cập nhật.")
-
-    latest = history.iloc[-1]
-    latest_date = pd.to_datetime(latest["date"])
-    if database_path is None:
-        database_path = Path(__file__).resolve().parent.parent / "data" / "market_data.db"
-
-    quote = None
-    quote_error = None
     market_open = is_vietnam_trading_session()
-    if not market_open:
-        refreshed = dict(report_data)
-        refreshed["current_price"] = _format_price(latest["close"])
-        refreshed["price_source"] = (
-            f"Giá đóng cửa phiên gần nhất ({latest_date:%d/%m/%Y}); "
-            "ngoài giờ giao dịch, đơn vị đồng/cổ phiếu"
-        )
-        refreshed["data_as_of"] = latest_date.strftime("%d/%m/%Y")
-        refreshed["quote_error"] = None
-        refreshed["quote_is_realtime"] = False
-        refreshed["technical_as_of"] = latest_date.strftime("%d/%m/%Y")
-        refreshed["price_chart"] = _price_chart_data_uri(history, ticker)
-        refreshed["technical_metrics"] = [
-            {
-                "label": metric["label"],
-                "value": _format_price(latest["close"])
-                if metric["label"] == "Giá gần nhất"
-                else metric["value"],
-            }
-            for metric in report_data.get("technical_metrics", [])
-        ]
-        refreshed = _apply_company_metadata(
-            refreshed, load_company_metadata(ticker)
-        )
-        scoring_data = report_data.get("_scoring_data")
-        if isinstance(scoring_data, dict) and isinstance(scoring_data.get("tech"), dict):
-            scoring_data = {
-                **scoring_data,
-                "tech": {
-                    **scoring_data["tech"],
-                    "close": float(latest["close"]),
-                    "as_of": latest_date.strftime("%Y-%m-%d"),
-                },
-            }
-            refreshed = apply_scoring_to_report(
-                refreshed, scoring_data, use_ai=False
-            )
-            refreshed["_scoring_data"] = scoring_data
-        return refreshed
-
+    quote = None
     try:
         quote = load_realtime_quote(ticker, database_path=database_path)
     except RuntimeError as exc:
-        quote_error = str(exc)
-    if quote is None and quote_error is None and market_open:
-        quote_error = f"Không tìm thấy báo giá realtime cho mã {ticker}."
+        refreshed["quote_error"] = str(exc)
 
-    waiting_for_realtime = market_open and quote is None
-    if quote is not None:
-        close = _score_value(quote.get("price"))
+    history = refreshed.get("price_history")
+    latest = None
+    if isinstance(history, pd.DataFrame) and not history.empty:
+        latest = history.sort_values("date").iloc[-1]
+
+    if quote and quote.get("price") is not None:
+        current_price = _format_price(_score_value(quote["price"]))
         quote_timestamp = quote.get("timestamp")
-        try:
-            quote_date = datetime.fromisoformat(
-                quote_timestamp.replace("Z", "+00:00")
-            ).astimezone().strftime("%d/%m/%Y %H:%M")
-        except (AttributeError, TypeError, ValueError):
-            quote_date = quote_timestamp or "Thời gian không rõ"
-        quote_source = quote.get("source") or "market_data.db"
-        price_source = (
-            f"{quote_source} lúc {quote_date}; "
-            "đơn vị quy đổi sang đồng/cổ phiếu"
+        if quote_timestamp:
+            try:
+                quote_date = datetime.fromisoformat(
+                    quote_timestamp.replace("Z", "+00:00")
+                ).astimezone().strftime("%d/%m/%Y %H:%M")
+            except ValueError:
+                quote_date = quote_timestamp
+        else:
+            quote_date = None
+        refreshed["current_price"] = current_price
+        refreshed["price_source"] = (
+            f"{quote.get('source', 'Nguồn realtime')}"
+            + (f" lúc {quote_date}" if quote_date else "")
+            + "; đơn vị đồng/cổ phiếu"
+        )
+        refreshed["data_as_of"] = quote_date or refreshed.get("data_as_of")
+        refreshed["quote_error"] = None
+        if isinstance(refreshed.get("tech"), dict):
+            refreshed["tech"] = {
+                **refreshed["tech"],
+                "close": _score_value(quote["price"]),
+                "current_price": current_price,
+                "as_of": quote_timestamp or refreshed["tech"].get("as_of"),
+                "source": quote.get("source"),
+            }
+    elif market_open:
+        current_price = "Chờ realtime"
+        refreshed["current_price"] = current_price
+        refreshed["data_as_of"] = "Chờ realtime"
+        refreshed["price_source"] = (
+            "Đang trong giờ giao dịch nhưng chưa có quote realtime; "
+            "không hiển thị giá lịch sử thay thế"
+        )
+    elif latest is not None:
+        close = _score_value(latest.get("close"))
+        current_price = _format_price(close)
+        latest_date = pd.to_datetime(latest["date"])
+        refreshed["current_price"] = current_price
+        refreshed["data_as_of"] = latest_date.strftime("%d/%m/%Y")
+        refreshed["price_source"] = (
+            f"Giá đóng cửa lịch sử {latest_date:%d/%m/%Y}; ngoài giờ giao dịch"
         )
     else:
-        close = float(latest["close"])
-        quote_timestamp = None
-        quote_date = None
-        quote_source = None
-        price_source = (
-            "Đang trong giờ giao dịch nhưng chưa có quote realtime; "
-            "không hiển thị giá lịch sử thay thế, đơn vị đồng/cổ phiếu"
-            if waiting_for_realtime
-            else f"Giá đóng cửa lịch sử {latest_date:%d/%m/%Y}; "
-            "ngoài giờ giao dịch, đơn vị đồng/cổ phiếu"
-        )
+        current_price = refreshed.get("current_price", "N/A")
 
-    refreshed = dict(report_data)
-    refreshed["current_price"] = (
-        "Chờ realtime" if waiting_for_realtime else _format_price(close)
-    )
-    refreshed["price_source"] = price_source
-    refreshed["data_as_of"] = (
-        quote_date
-        or ("Chờ realtime" if waiting_for_realtime else latest_date.strftime("%d/%m/%Y"))
-    )
-    refreshed["quote_error"] = quote_error
-    refreshed["quote_is_realtime"] = quote is not None
-    refreshed["technical_as_of"] = latest_date.strftime("%d/%m/%Y")
-    refreshed["price_chart"] = _price_chart_data_uri(
-        history, ticker, close if quote else None
-    )
-    refreshed["technical_metrics"] = [
-        {
-            "label": metric["label"],
-            "value": refreshed["current_price"] if metric["label"] == "Giá gần nhất"
-            else metric["value"],
+    for metric in refreshed.get("technical_metrics", []):
+        if isinstance(metric, dict) and metric.get("label") == "Giá gần nhất":
+            metric["value"] = current_price
+    if isinstance(refreshed.get("tech"), dict):
+        refreshed["tech"] = {
+            **refreshed["tech"],
+            "current_price": current_price,
         }
-        for metric in report_data.get("technical_metrics", [])
-    ]
-    refreshed = _apply_company_metadata(refreshed, load_company_metadata(ticker))
-
-    scoring_data = report_data.get("_scoring_data")
-    if isinstance(scoring_data, dict) and isinstance(scoring_data.get("tech"), dict):
-        scoring_data = {
-            **scoring_data,
-            "tech": {
-                **scoring_data["tech"],
-                "close": close,
-                "as_of": quote_timestamp or latest_date.strftime("%Y-%m-%d"),
-                "source": quote_source or report_data.get("price_history_source"),
-            },
-        }
-        refreshed = apply_scoring_to_report(
-            refreshed, scoring_data, use_ai=False
+    target_data = refreshed.get("valuation") or refreshed.get("valuation_summary") or {}
+    target_price_raw = (
+        target_data.get("target_price")
+        if isinstance(target_data, dict)
+        else None
+    ) or refreshed.get("target_price")
+    target_price_float = _price_to_vnd(target_price_raw)
+    if target_price_float is not None:
+        refreshed["target_price"] = (
+            f"{target_price_float:,.0f} đ".replace(",", ".")
         )
-        refreshed["_scoring_data"] = scoring_data
-
+    current_price_float = _price_to_vnd(current_price)
+    if current_price_float and target_price_float:
+        upside_percent = (target_price_float - current_price_float) / current_price_float * 100
+        refreshed["upside"] = f"{'+' if upside_percent > 0 else ''}{upside_percent:.1f}%"
+    range_values = refreshed.get("target_price_range_values")
+    if (
+        current_price_float
+        and isinstance(range_values, (list, tuple))
+        and len(range_values) == 2
+    ):
+        range_upside = [
+            (float(target) - current_price_float) / current_price_float * 100
+            for target in range_values
+        ]
+        refreshed["upside_range"] = (
+            f"{range_upside[0]:+.1f}% đến {range_upside[1]:+.1f}%"
+        )
     return refreshed
-
 
 def apply_scoring_to_report(report_data, analysis_data, use_ai=False):
     """Add scoring results to a PDF context without replacing its source data."""
@@ -1668,21 +1769,110 @@ def apply_scoring_to_report(report_data, analysis_data, use_ai=False):
         industry=report_data.get("industry") or "",
     )
     report = dict(report_data)
+    report["report_date"] = (
+        scoring_context.get("report_date")
+        or report_data.get("report_date")
+        or datetime.now().strftime("%d/%m/%Y")
+    )
+    
+    # --- ĐÃ SỬA: LÙI ĐẦU DÒNG CHUẨN VÀ BỌC AN TOÀN .GET() ---
+# SỬA ĐOẠN NÀY TRONG report_pdf.py:
     for key in (
         "recommendation",
+        "total_score",
+        "scoring_weights",
+        "scores",
+        "technical_score",
+        "fundamental_score",
+        "technical_coverage",
+        "decision_note",
+        "decision_rule",
         "target_price",
+        "target_price_range",
+        "target_price_range_values",
         "upside",
+        "upside_range",
         "target_method",
         "target_confidence",
+        "valuation_reference_pe",
+        "valuation_current_pe",
+        "valuation_history_count",
+        "valuation_pe_low",
+        "valuation_pe_high",
+        "valuation_eps",
+        "valuation_eps_count",
+        "valuation_eps_normalized",
+        "valuation_eps_basis",
+        "valuation_pb_reference",
+        "valuation_pb_count",
+        "valuation_pb_target",
+        "valuation_warning",
         "valuation_methods",
         "valuation_summary",
         "investment_thesis",
         "ai_summary",
+        "ai_generated",
         "investment_points",
         "key_risks",
     ):
-        report[key] = scoring_context[key]
-    report["score_breakdown"] = recommendation["score_breakdown"]
+        if isinstance(scoring_context, dict) and scoring_context.get(key) is not None:
+            report[key] = scoring_context.get(key)
+        else:
+            # Nếu key là các danh sách (points/risks), gán [] thay vì None
+            if key in ("investment_points", "key_risks", "valuation_methods"):
+                report[key] = report_data.get(key) or []
+            else:
+                report[key] = report_data.get(key) or ""
+    report["score_breakdown"] = recommendation.get("score_breakdown", {})
+    technical_factors = report["score_breakdown"].get("technical_factors", [])
+    technical_factor_groups = {}
+    for factor in technical_factors:
+        category = factor.get("category", "Khác")
+        technical_factor_groups.setdefault(category, []).append(factor)
+    report["technical_factor_groups"] = [
+        {
+            "category": category,
+            "weight": sum(factor.get("weight", 0) for factor in factors),
+            "factors": factors,
+        }
+        for category, factors in technical_factor_groups.items()
+    ]
+    report["technical_metrics"] = report_data.get("technical_metrics", [])
+    report["financial_sections"] = report_data.get("financial_sections", [])
+    report["financial_years"] = report_data.get("financial_years", [])
+    report["financial_error"] = report_data.get("financial_data_error") or ""
+    report["technical_as_of"] = (
+        tech.get("signal_as_of") or tech.get("as_of") or report_data.get("data_as_of")
+    )
+    report["data_as_of"] = report_data.get("data_as_of") or report_data.get("report_date")
+    report["price_source"] = report_data.get("price_source") or tech.get("source") or ""
+    report["price_chart"] = report_data.get("price_chart") or ""
+    report["price_52w_range"] = report_data.get("price_52w_range") or "N/A"
+    report["avg_volume_20d"] = report_data.get("avg_volume_20d") or "N/A"
+    report["market_cap"] = report_data.get("market_cap") or "N/A"
+    report["shares_outstanding"] = report_data.get("shares_outstanding") or "N/A"
+    report["foreign_ownership"] = report_data.get("foreign_ownership") or "N/A"
+    report["foreign_ownership_limit"] = report_data.get("foreign_ownership_limit") or ""
+    report["beta"] = report_data.get("beta") or "N/A"
+    news_feed = report_data.get("news_feed") or {}
+    report["news_list"] = (
+        report_data.get("news_list")
+        or news_feed.get("headlines")
+        or []
+    )
+    report["news_error"] = (
+        news_feed.get("error")
+        if news_feed.get("status") == "error"
+        else ""
+    )
+    report["news_source"] = news_feed.get("source") or "Nguồn tìm kiếm chưa xác định"
+    report["news_status"] = news_feed.get("status") or "unknown"
+    report["news_period"] = {
+        "d": "24 giờ",
+        "w": "7 ngày",
+        "m": "31 ngày",
+        "y": "1 năm",
+    }.get(news_feed.get("period_used"), "chưa xác định")
 
     sources = [
         source.strip()
@@ -1693,6 +1883,7 @@ def apply_scoring_to_report(report_data, analysis_data, use_ai=False):
         if source and not any(source in existing for existing in sources):
             sources.append(source)
     report["data_sources"] = "; ".join(sources)
+    
     return report
 
 

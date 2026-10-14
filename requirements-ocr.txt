@@ -1,0 +1,2 @@
+# Optional local OCR support for scanned PDFs (no documents are sent to a service).
+rapidocr_onnxruntime>=1.2.3
