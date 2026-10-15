@@ -1821,8 +1821,10 @@ def call_ai(prompt):
 
 
 def fallback_summary(r):
+    """Tóm tắt theo quy tắc: chỉ nêu điểm, khuyến nghị, lý do và dải định giá.
+    Luận điểm tích cực và rủi ro KHÔNG nhắc lại ở đây vì web và PDF đã có khung danh sách riêng."""
     r = r or {}
-    symbol = r.get("symbol") or r.get("ticker") or "HPG"
+    symbol = r.get("symbol") or r.get("ticker") or "N/A"
     # Lấy tổng điểm chuẩn xác từ total_score hoặc score_breakdown
     total_score = r.get("total_score")
     if total_score is None:
@@ -1838,33 +1840,23 @@ def fallback_summary(r):
     else:
         upside_p = str(upside_val or "N/A")
 
-    # Bỏ dấu chấm cuối từng ý trước khi nối, tránh lỗi ".;" và ".."
-    reasons = [str(x).rstrip(". ") for x in (r.get("reasons") or r.get("investment_points") or [])]
-    risks = [str(x).rstrip(". ") for x in (r.get("risks") or r.get("key_risks") or [])]
-
     score_text = f"{total_score}/100 điểm định lượng" if total_score is not None else "chưa đủ dữ liệu để tính điểm tổng 50/50"
-    p1 = f"Cổ phiếu {symbol} {score_text}, ứng với khuyến nghị {rec}. {note}"
+    summary = f"Cổ phiếu {symbol} {score_text}, ứng với khuyến nghị {rec}. {note}"
     if r.get("target_price") is not None:
         price_range = r.get("target_price_range")
         range_upside = r.get("upside_range")
         if price_range:
-            p1 += (
+            summary += (
                 f" Dải giá tham khảo {r.get('valuation_label') or 'P/E'} là "
                 f"{_price_vnd(price_range[0])}–{_price_vnd(price_range[1])} "
                 f"với upside {range_upside[0]:+.1%} đến {range_upside[1]:+.1%}."
             )
         else:
-            p1 += f" Giá tham khảo theo mô hình là {target_p} với upside {upside_p}."
+            summary += f" Giá tham khảo theo mô hình là {target_p} với upside {upside_p}."
+    return summary.strip()
 
-    p2 = f"Các luận điểm tích cực gồm: {'; '.join(reasons) if reasons else 'Chưa có luận điểm tích cực đủ dữ liệu xác nhận'}."
-    risk_text = (
-        "; ".join(risks)
-        if risks
-        else "Chưa có cảnh báo cụ thể từ các chỉ báo hiện có; điều này không đồng nghĩa không có rủi ro"
-    )
-    p3 = f"Các rủi ro cần lưu ý: {risk_text}."
 
-    return "\n\n".join([p1, p2, p3])
+
 def _round2(value):
     return round(value, 2) if isinstance(value, (int, float)) else value
 

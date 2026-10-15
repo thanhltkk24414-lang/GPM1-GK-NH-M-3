@@ -1216,7 +1216,9 @@ if st.session_state.get("report_ticker"):
                             ),
                         }
                         for factor in fundamental_factors
+                        if factor["points"] is not None   # ẩn chỉ tiêu thiếu dữ liệu
                     ]),
+
                     use_container_width=True,
                     hide_index=True,
                 )

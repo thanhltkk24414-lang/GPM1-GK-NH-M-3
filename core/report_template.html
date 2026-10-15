@@ -71,14 +71,14 @@
         <td class="panel-cell">
           <h2>LUẬN ĐIỂM CHÍNH</h2>
           <ul>
-            {% for item in investment_points[:4] %}<li>{{ item }}</li>{% endfor %}
+            {% for item in investment_points %}<li>{{ item }}</li>{% endfor %}
             {% if not investment_points %}<li>Chưa có luận điểm được hệ thống ghi nhận.</li>{% endif %}
           </ul>
         </td>
         <td class="panel-cell risk-cell">
           <h2>RỦI RO CẦN THEO DÕI</h2>
           <ul>
-            {% for item in key_risks[:4] %}<li>{{ item }}</li>{% endfor %}
+            {% for item in key_risks %}<li>{{ item }}</li>{% endfor %}
             {% if not key_risks %}<li>Chưa ghi nhận rủi ro nổi bật từ dữ liệu hiện có.</li>{% endif %}
           </ul>
         </td>
@@ -160,7 +160,7 @@
       <table class="factor-table fundamental-factor-table">
         <thead><tr><th>Tiêu chí</th><th>Dữ liệu</th><th>Tác động</th><th>Nhận xét và quy tắc</th></tr></thead>
         <tbody>
-          {% for factor in score_breakdown.fundamental_factors %}
+          {% for factor in score_breakdown.fundamental_factors if factor.points is not none %}
           <tr>
             <td>{{ factor.label }}</td>
             <td>{{ factor.evidence }}</td>
@@ -175,7 +175,7 @@
           {% endfor %}
         </tbody>
       </table>
-      <p class="section-note">Cột Tác động là số điểm cộng/trừ vào mức nền 50; dấu — nghĩa là chỉ tiêu chưa có dữ liệu nên không được chấm.</p>
+      <p class="section-note">Cột Tác động là số điểm cộng/trừ vào mức nền 50.{% if score_breakdown.fundamental_missing %} Chưa có dữ liệu nên không chấm: {{ score_breakdown.fundamental_missing|join(", ") }}.{% endif %}</p>
     </section>
     {% endif %}
 

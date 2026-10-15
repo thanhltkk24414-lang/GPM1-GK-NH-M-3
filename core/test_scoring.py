@@ -717,6 +717,37 @@ class LogicFixesRound3Tests(unittest.TestCase):
         primary = context["valuation_methods"][0]["fair_value"]
         self.assertEqual(primary, context["target_price_range"])
 
+class Round4DisplayTests(unittest.TestCase):
+    """Đợt 4: không lặp luận điểm/rủi ro trong tóm tắt; ẩn chỉ tiêu thiếu dữ liệu khỏi bảng điểm cơ bản."""
+
+    def _result(self):
+        return get_recommendation(LogicFixesRound3Tests.TECH, LogicFixesRound3Tests.FUND, use_ai=False)
+
+    def test_rule_summary_does_not_repeat_points_and_risks(self):
+        result = self._result()
+        summary = fallback_summary(result)
+
+        self.assertNotIn("Các luận điểm tích cực gồm", summary)
+        self.assertNotIn("Các rủi ro cần lưu ý", summary)
+        self.assertIn(result["recommendation"], summary)
+        self.assertEqual(result["ai_summary"], summary)
+
+    def test_pdf_fundamental_table_hides_missing_rows(self):
+        from pathlib import Path
+        import jinja2
+        template = (Path(__file__).resolve().parent / "report_template.html").read_text(encoding="utf-8")
+        start = template.index("{% if score_breakdown.fundamental_factors %}")
+        end = template.index("{% for section in financial_sections", start)
+        html = jinja2.Environment().from_string(template[start:end]).render(
+            score_breakdown=self._result()["score_breakdown"]
+        )
+
+        self.assertNotIn("<td>Tỷ lệ nợ xấu (NPL)</td>", html)
+        self.assertNotIn("Chưa chấm do thiếu dữ liệu", html)
+        self.assertIn("<td>Hiệu quả sinh lời (ROE)</td>", html)
+        self.assertIn("Chưa có dữ liệu nên không chấm: Tỷ lệ nợ xấu (NPL)", html)
+
+
 
 if __name__ == "__main__":
     unittest.main()
