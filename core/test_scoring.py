@@ -597,8 +597,9 @@ class ShareAdjustmentAndBankTests(unittest.TestCase):
         result = compute_target_price({"close": 20.45}, self.ACB_FUND)
 
         self.assertAlmostEqual(result["valuation_current_pe"], 7.56, places=2)
-        low, high = result["upside_range"]
-        self.assertLess(high, 0)          # cả dải upside đều âm, không còn +8.8% đến +37.2%
+        # Ngân hàng: P/E lịch sử giờ là phương pháp đối chiếu, nằm ở valuation_pe_upside_range
+        low, high = result["valuation_pe_upside_range"]
+        self.assertLess(high, 0)          # cả dải upside P/E đều âm, không còn +8.8% đến +37.2%
         self.assertLess(low, -0.25)
         self.assertEqual(result["confidence"], "Thấp")
         self.assertIn("lệch", result["valuation_warning"])
@@ -628,6 +629,94 @@ class ShareAdjustmentAndBankTests(unittest.TestCase):
         )
         self.assertFalse(result["valuation_shares_adjusted"])
         self.assertEqual(result["target_price"], 28.0)
+
+class LogicFixesRound3Tests(unittest.TestCase):
+    """Kiểm chứng các sửa lỗi đợt 3 bằng số liệu ACB in trong báo cáo ngày 15/10/2026."""
+
+    FUND = dict(
+        ShareAdjustmentAndBankTests.ACB_FUND,
+        historical_ROE=[0.2649, 0.2480, 0.2175, 0.1756],
+        historical_NIM=[4.31, 3.89, 3.61, 2.92],   # cố ý để dạng % để kiểm tra tự đổi đơn vị
+    )
+    TECH = {
+        "symbol": "ACB", "close": 20.45, "signal_close": 20.45,
+        "MA20": 21.27, "MA50": 21.88, "MA200": 21.29, "ma50_slope": -0.012,
+        "ma50_ma200_cross": "none", "RSI": 33.79, "MACD": -0.48, "MACD_signal": -0.40,
+        "volume_ratio": 0.53, "price_change_pct": 0.0, "breakout_20d": False,
+        "support_distance_pct": 0.0149, "resistance_distance_pct": 0.1663,
+    }
+
+    def test_bank_uses_pb_roe_as_primary_and_flags_disagreement(self):
+        result = compute_target_price({"close": 20.45}, self.FUND)
+
+        self.assertEqual(result["valuation_label"], "P/B theo ROE")
+        self.assertEqual(result["valuation_methods"][0]["role"], "Phương pháp chính")
+        self.assertEqual(result["valuation_methods"][1]["role"], "Đối chiếu")
+        low, high = result["target_price_range"]
+        self.assertAlmostEqual(low, 20.55, places=2)    # COE 15%
+        self.assertAlmostEqual(high, 25.69, places=2)   # COE 13%
+        self.assertFalse(result["valuation_consensus"])  # P/B–ROE dương, P/E âm
+        self.assertEqual(result["confidence"], "Thấp")
+        self.assertIn("không đồng thuận", result["valuation_warning"])
+        self.assertTrue(result["method"].startswith("P/B hợp lý"))
+
+    def test_non_bank_keeps_pe_and_capitalizes_eps(self):
+        fund = dict(self.FUND, valuation_type="non-bank")
+        result = compute_target_price({"close": 20.45}, fund)
+
+        self.assertEqual(result["valuation_label"], "P/E")
+        self.assertIn("EPS dương", result["method"])
+        self.assertNotIn("eps dương", result["method"])
+
+    def test_fundamental_trends_and_coverage(self):
+        result = get_recommendation(self.TECH, self.FUND, use_ai=False)
+        factors = {f["label"]: f for f in result["score_breakdown"]["fundamental_factors"]}
+
+        self.assertEqual(factors["Xu hướng ROE 3 năm"]["points"], -10)
+        self.assertEqual(factors["Xu hướng NIM 3 năm"]["points"], -5)
+        self.assertEqual(result["scores"]["fundamental"], 37)
+        self.assertEqual(result["fundamental_coverage"], 67)
+        self.assertTrue(any("6/9 chỉ tiêu" in risk for risk in result["risks"]))
+
+    def test_disagreeing_valuation_is_reported_and_blocks_signal(self):
+        result = get_recommendation(self.TECH, self.FUND, use_ai=False)
+
+        self.assertEqual(result["recommendation"], "GIỮ")
+        self.assertIn("trái chiều", result["decision_note"])
+        self.assertIn("P/B theo ROE", result["decision_note"])
+        self.assertTrue(any("trái chiều" in risk for risk in result["risks"]))
+
+    def test_ma50_above_ma200_but_falling_is_not_a_bullish_point(self):
+        result = get_recommendation(self.TECH, self.FUND, use_ai=False)
+        factors = {f["label"]: f for f in result["score_breakdown"]["technical_factors"]}
+
+        self.assertEqual(factors["MA50 so với MA200"]["score"], 40)
+        self.assertEqual(factors["Khoảng cách tới hỗ trợ 60 phiên"]["score"], 50)
+        self.assertFalse(any("ủng hộ xu hướng tăng" in reason for reason in result["reasons"]))
+        self.assertTrue(any("đang suy yếu" in risk for risk in result["risks"]))
+
+    def test_ai_facts_and_prompts_carry_guardrails(self):
+        result = get_recommendation(self.TECH, self.FUND, use_ai=False)
+        facts = build_valuation_facts(self.TECH, self.FUND, result)
+        prompt = build_tab_prompt("valuation", facts)
+
+        self.assertIn("KHÔNG đồng thuận", facts)
+        self.assertIn("Không chào hỏi", prompt)
+        self.assertIn("không được mô tả là \"ổn định\"", prompt)
+        self.assertIn("ROE giảm từ 26.5% xuống 17.6%", build_fundamental_facts(self.FUND, result))
+
+    def test_report_context_uses_consistent_display_values(self):
+        result = get_recommendation(self.TECH, self.FUND, use_ai=False)
+        context = to_report_context(result, self.TECH, self.FUND)
+
+        self.assertEqual(context["valuation_label"], "P/B theo ROE")
+        self.assertEqual(context["valuation_pe_low"], round(context["valuation_pe_low"], 2))
+        self.assertRegex(context["valuation_eps_display"], r"^\d{1,3}(,\d{3})* đ/cp$")
+        self.assertTrue(context["valuation_shares_changed"])
+        self.assertTrue(context["valuation_consensus_display"].startswith("Không"))
+        primary = context["valuation_methods"][0]["fair_value"]
+        self.assertEqual(primary, context["target_price_range"])
+
 
 if __name__ == "__main__":
     unittest.main()

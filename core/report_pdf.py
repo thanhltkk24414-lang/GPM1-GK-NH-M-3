@@ -1117,6 +1117,9 @@ def _load_financial_data(ticker, workbook_path, fetch_missing=False):
     historical_bvps, _ = statement_series(
         "ratio", ("book_value_per_share_bvps",)
     )
+    # BỔ SUNG ĐỢT 3: chuỗi ROE và NIM nhiều năm (đơn vị %) để chấm xu hướng
+    historical_roe, _ = statement_series("ratio", ("roe",))
+    historical_nim, _ = statement_series("ratio", ("net_interest_margin_nim",))
     def yoy_percent(series):
         if series is None:
             return {}
@@ -1172,6 +1175,16 @@ def _load_financial_data(ticker, workbook_path, fetch_missing=False):
             "BVPS": (
                 [float(value) if pd.notna(value) else None for value in historical_bvps]
                 if historical_bvps is not None
+                else []
+            ),
+            "ROE": (
+                [float(value) if pd.notna(value) else None for value in historical_roe]
+                if historical_roe is not None
+                else []
+            ),
+            "NIM": (
+                [float(value) if pd.notna(value) else None for value in historical_nim]
+                if historical_nim is not None
                 else []
             ),
         },
@@ -1331,6 +1344,8 @@ def load_stock_report_data(
     history["MA20"] = close_series.rolling(20, min_periods=20).mean()
     history["MA50"] = close_series.rolling(50, min_periods=50).mean()
     history["MA200"] = close_series.rolling(200, min_periods=200).mean()
+    # BỔ SUNG ĐỢT 3: độ dốc MA50 trong 10 phiên (âm = MA50 đang đi xuống)
+    history["MA50_slope_10"] = history["MA50"] / history["MA50"].shift(10) - 1
 
     price_change_series = close_series.pct_change()
     change = close_series.diff()
@@ -1491,6 +1506,11 @@ def load_stock_report_data(
     fundamental_data["historical_PB"] = historical_valuation.get("PB", [])
     fundamental_data["historical_EPS"] = historical_valuation.get("EPS", [])
     fundamental_data["historical_BVPS"] = historical_valuation.get("BVPS", [])
+    # BỔ SUNG ĐỢT 3: ROE, NIM nhiều năm đổi từ % sang thập phân (26.49 -> 0.2649)
+    for source_key, target_key in (("ROE", "historical_ROE"), ("NIM", "historical_NIM")):
+        fundamental_data[target_key] = [
+            value / 100 for value in historical_valuation.get(source_key, []) if value is not None
+        ]
     net_profit_by_year = financial_chart_data.get("net_profit", {})
     if net_profit_by_year:
         latest_financial_year = str(max(map(int, net_profit_by_year)))
@@ -1560,6 +1580,7 @@ def load_stock_report_data(
             "MA20": _score_value(latest.get("MA20")),
             "MA50": _score_value(latest.get("MA50")),
             "MA200": _score_value(latest.get("MA200")),
+            "ma50_slope": _score_value(latest.get("MA50_slope_10")),  # BỔ SUNG ĐỢT 3
             "RSI": _score_value(rsi),
             "MACD": _score_value(latest.get("MACD")),
             "MACD_signal": _score_value(latest.get("MACD_signal")),
@@ -1787,7 +1808,7 @@ def apply_scoring_to_report(report_data, analysis_data, use_ai=False):
         or report_data.get("report_date")
         or datetime.now().strftime("%d/%m/%Y")
     )
-    
+
     # --- ĐÃ SỬA: LÙI ĐẦU DÒNG CHUẨN VÀ BỌC AN TOÀN .GET() ---
 # SỬA ĐOẠN NÀY TRONG report_pdf.py:
     for key in (
@@ -1822,6 +1843,15 @@ def apply_scoring_to_report(report_data, analysis_data, use_ai=False):
         "valuation_warning",
         "valuation_methods",
         "valuation_summary",
+        # BỔ SUNG ĐỢT 3
+        "valuation_label",
+        "valuation_consensus_display",
+        "valuation_pe_range_display",
+        "valuation_pe_upside_display",
+        "valuation_eps_display",
+        "valuation_bvps_display",
+        "valuation_shares_changed",
+        "fundamental_coverage",
         "investment_thesis",
         "ai_summary",
         "ai_generated",
@@ -1896,7 +1926,7 @@ def apply_scoring_to_report(report_data, analysis_data, use_ai=False):
         if source and not any(source in existing for existing in sources):
             sources.append(source)
     report["data_sources"] = "; ".join(sources)
-    
+
     return report
 
 

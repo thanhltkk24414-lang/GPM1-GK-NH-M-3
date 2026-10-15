@@ -35,16 +35,16 @@ def _refresh_report_quote(ticker):
     except Exception as exc:
         st.error(f"Không cập nhật được giá realtime cho {ticker}: {exc}")
         return None
-    
+
     changed = any(
         refreshed.get(key) != report_data.get(key)
         for key in ("current_price", "recommendation", "target_price", "upside")
     )
     st.session_state["report_data"] = refreshed
-    
+
     if changed:
         st.rerun(scope="app")
-        
+
     return refreshed  # THÊM DÒNG NÀY ĐỂ TRẢ VỀ DICT DATA MỚI NHẤT
 
 # --- CSS CHUẨN HÓA GIAO DIỆN, FONT TO, TABS ĐẸP MẮT ---
@@ -101,7 +101,7 @@ st.markdown("""
         margin-top: 35px;
         margin-bottom: 25px;
     }
-    
+
     /* Tăng cỡ chữ nội dung, bảng, chú thích */
     p, li, span, div, [data-testid="stCaptionContainer"], [data-testid="stText"], .stMarkdown {
         font-size: 17px !important;
@@ -160,7 +160,7 @@ st.markdown("""
         background: linear-gradient(135deg, #9f7aea 0%, #805ad5 100%);
         transform: translateY(-2px);
     }
-    
+
     .custom-table { width: 100%; border-collapse: collapse; color: var(--text-color); font-size: 16px; }
     .custom-table th { border-bottom: 2px solid rgba(138, 43, 226, 0.5); padding: 12px; text-align: right; color: #f6c85f; font-weight: 700; }
     .custom-table th:first-child { text-align: left; }
@@ -221,7 +221,7 @@ if st.session_state.get("report_ticker"):
                 report_data["_report_data_revision"] = REPORT_DATA_REVISION
                 st.session_state.pop(f"analysis_pdf_{ticker}", None)
                 st.session_state["report_data"] = report_data
-            
+
             # 3. CHẠY REFRESH QUOTE VÀ CẬP NHẬT TRỰC TIẾP LẠI VÀO BIẾN REPORT_DATA
             refreshed_data = _refresh_report_quote(ticker)
             if refreshed_data and isinstance(refreshed_data, dict):
@@ -231,7 +231,7 @@ if st.session_state.get("report_ticker"):
 
             company_name = report_data.get("company_name", ticker)
             st.markdown(f'<div class="main-title" style="font-size: 30px; margin-top: 15px;">{hoverify("BÁO CÁO PHÂN TÍCH:")} {hoverify(company_name.upper())}</div>', unsafe_allow_html=True)
-            
+
             sub_info = (
                 f"<b>{hoverify('Mã CK:')}</b> {hoverify(ticker)} &nbsp;|&nbsp; "
                 f"<b>{hoverify('Sàn:')}</b> {hoverify(report_data.get('exchange', 'N/A'))} &nbsp;|&nbsp; "
@@ -282,7 +282,7 @@ if st.session_state.get("report_ticker"):
                         "result": valuation_result,
                     },
                 })
-            
+
             # --- TẢI XUỐNG BÁO CÁO PDF & BCTN ---
             pdf_path = f"outputs/{ticker}_report.pdf"
 
@@ -314,11 +314,11 @@ if st.session_state.get("report_ticker"):
                     type="primary",
                     width="stretch",
                 )
-            
+
             bctn_year = report_data.get("financial_years", [])[-1] if report_data.get("financial_years") else 2023
             import core.annual_report as ar
             bctn_path = ar.OUTPUT_DIR / f"{ticker}_{bctn_year}.pdf"
-            
+
             with col_dl2:
                 if bctn_path.exists():
                     with open(bctn_path, "rb") as f:
@@ -350,9 +350,9 @@ if st.session_state.get("report_ticker"):
             # HỆ THỐNG 5 TABS CHUYÊN SÂU
             # ==========================================
             tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                "🎯 1. Tổng Quan & Khuyến Nghị", 
-                "📈 2. Phân Tích Kỹ Thuật", 
-                "🏦 3. Phân Tích Cơ Bản", 
+                "🎯 1. Tổng Quan & Khuyến Nghị",
+                "📈 2. Phân Tích Kỹ Thuật",
+                "🏦 3. Phân Tích Cơ Bản",
                 "⚖️ 4. Định Giá & Kịch Bản",
                 "📰 5. Tin Tức & Sự Kiện"
             ])
@@ -360,17 +360,15 @@ if st.session_state.get("report_ticker"):
 # --- TAB 1: TỔNG QUAN & KHUYẾN NGHỊ ---
             with tab1:
                 st.markdown(f'<div class="section-header">🎯 {hoverify("Khuyến Nghị Đầu Tư & Luận Điểm Tổng Quan")}</div>', unsafe_allow_html=True)
-                
+
                 # 1. 4 Ô CHỈ SỐ KHUYẾN NGHỊ & ĐỊNH GIÁ MỤC TIÊU
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Giá Hiện Tại", report_data.get("current_price", "N/A"))
                 c2.metric("Khuyến Nghị", recommendation_result["recommendation"])
                 target_price_range = recommendation_result.get("target_price_range")
+                valuation_label = recommendation_result.get("valuation_label") or "P/E"
                 target_price_display = (
-                    (
-                        f"{target_price_range[0] * 1000:,.0f} – "
-                        f"{target_price_range[1] * 1000:,.0f} đ"
-                    ).replace(",", ".")
+                    f"{target_price_range[0] * 1000:,.0f} – {target_price_range[1] * 1000:,.0f} đ"
                     if target_price_range
                     else "N/A"
                 )
@@ -380,12 +378,17 @@ if st.session_state.get("report_ticker"):
                     if upside_range
                     else "N/A"
                 )
-                c3.metric("Dải giá tham khảo P/E", target_price_display)
-                c4.metric("Upside theo dải P/E", upside_display)
+                c3.metric(f"Dải giá tham khảo {valuation_label}", target_price_display)
+                c4.metric(f"Upside theo dải {valuation_label}", upside_display)
+                if recommendation_result.get("valuation_consensus") is False:
+                    st.warning(
+                        "Các phương pháp định giá cho kết quả trái chiều; "
+                        "chưa thể kết luận cổ phiếu đắt hay rẻ. Xem chi tiết ở tab Định giá."
+                    )
 
                 # 2. TỔNG ĐIỂM CHỈ GỒM HAI TRỤ CỘT CƠ BẢN VÀ KỸ THUẬT
                 scores_dict = recommendation_result["scores"]
-                
+
                 # Điểm thành phần các trụ cột
                 total_score = recommendation_result["total_score"]
                 total_score_display = (
@@ -406,7 +409,7 @@ if st.session_state.get("report_ticker"):
                 <div style="margin: 12px 0 18px 0; padding: 12px 16px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
                     <div style="font-size: 16px;">
                         <b>📊 Tổng Điểm Định Lượng Tổng Hợp:</b> <span style="font-size: 20px; font-weight: 800; color: #f6c85f;">{total_score_display}</span>
-                        <span style="font-size: 13px; opacity: 0.85; margin-left: 10px;">(MUA từ 65/100 · BÁN dưới 45/100)</span>
+                        <span style="font-size: 13px; opacity: 0.85; margin-left: 10px;">(MUA: điểm ≥ 65 và cận thấp upside ≥ +15% · BÁN: điểm &lt; 45 và cận cao upside ≤ −15%)</span>
                     </div>
                     <div style="font-size: 13px; color: #a0aec0; margin-top: 6px;">
                         • <b>Điểm cơ bản:</b> {fundamental_score_display} (50%)<br>
@@ -430,7 +433,7 @@ if st.session_state.get("report_ticker"):
 
                 # 4. HAI CỘT LUẬN ĐIỂM TÍCH CỰC & RỦI RO (ĐÃ FIX CHUẨN HTML THỤT LỀ)
                 col_p, col_r = st.columns(2)
-                
+
                 with col_p:
                     p_html = f'<div class="summary-box" style="border-left: 4px solid #089981 !important;"><b>✅ Luận Điểm Tích Cực:</b><ul style="margin-top: 8px; padding-left: 20px;">'
                     investment_points = recommendation_result.get("reasons") or []
@@ -441,7 +444,7 @@ if st.session_state.get("report_ticker"):
                         p_html += "<li>Chưa có luận điểm tích cực đủ dữ liệu xác nhận từ hai trụ cột chấm điểm.</li>"
                     p_html += '</ul></div>'
                     st.markdown(p_html, unsafe_allow_html=True)
-                    
+
                 with col_r:
                     r_html = f'<div class="summary-box" style="border-left: 4px solid #F23645 !important;"><b>⚠️ Rủi Ro & Thách Thức:</b><ul style="margin-top: 8px; padding-left: 20px;">'
                     key_risks = recommendation_result.get("risks") or []
@@ -530,7 +533,7 @@ if st.session_state.get("report_ticker"):
                             for change in volume_change
                         ]
                         df_stock['volume_millions'] = df_stock['volume'] / 1_000_000
-                        
+
                         fig = make_subplots(
                             rows=3, cols=1,
                             shared_xaxes=True,
@@ -542,19 +545,19 @@ if st.session_state.get("report_ticker"):
                                 "Động lượng RSI (14)",
                             )
                         )
-                        
+
                         fig.add_trace(go.Candlestick(
                             x=df_stock['date_str'], open=df_stock['open'], high=df_stock['high'], low=df_stock['low'], close=df_stock['close'],
                             increasing_line_color='#089981', decreasing_line_color='#F23645', name='Giá'
                         ), row=1, col=1)
-                        
+
                         fig.add_trace(go.Scatter(
-                            x=df_stock['date_str'], y=df_stock['MA20'], 
+                            x=df_stock['date_str'], y=df_stock['MA20'],
                             line=dict(color='#f59e0b', width=1.5), name='MA20'
                         ), row=1, col=1)
-                        
+
                         fig.add_trace(go.Scatter(
-                            x=df_stock['date_str'], y=df_stock['MA50'], 
+                            x=df_stock['date_str'], y=df_stock['MA50'],
                             line=dict(color='#3b82f6', width=1.5), name='MA50'
                         ), row=1, col=1)
 
@@ -572,25 +575,25 @@ if st.session_state.get("report_ticker"):
                                 "<extra></extra>"
                             ),
                         ), row=2, col=1)
-                        
+
                         fig.add_trace(go.Scatter(
                             x=df_stock['date_str'], y=df_stock['RSI14'],
                             line=dict(color='#e02424', width=2), name='RSI 14'
                         ), row=3, col=1)
-                        
+
                         fig.add_hline(y=70, line_dash="dash", line_color="rgba(242, 54, 69, 0.6)", row=3, col=1)
                         fig.add_hline(y=30, line_dash="dash", line_color="rgba(8, 153, 129, 0.6)", row=3, col=1)
-                        
+
                         fig.update_layout(
-                            height=760, 
-                            margin=dict(l=20, r=20, t=30, b=30), 
-                            paper_bgcolor="rgba(0,0,0,0)", 
-                            plot_bgcolor="rgba(0,0,0,0)", 
-                            showlegend=True, 
+                            height=760,
+                            margin=dict(l=20, r=20, t=30, b=30),
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            showlegend=True,
                             legend=dict(orientation="h", y=1.05, x=0),
                             xaxis_rangeslider_visible=False
                         )
-                        
+
                         fig.update_yaxes(title_text="Nghìn đồng", row=1, col=1)
                         fig.update_yaxes(title_text="Triệu CP", row=2, col=1)
                         fig.update_yaxes(range=[0, 100], row=3, col=1)
@@ -667,7 +670,7 @@ if st.session_state.get("report_ticker"):
             with tab3:
                 st.markdown(f'<div class="section-header">🏦 {hoverify("Phân Tích Cơ Bản & Báo Cáo Tài Chính Chi Tiết")}</div>', unsafe_allow_html=True)
                 import plotly.graph_objects as go
-                
+
                 # CSS TÙY CHỈNH NÚT BẤM CHUYỂN BIỂU ĐỒ KIỂU POPUP MOBILE
                 st.markdown("""
                 <style>
@@ -716,7 +719,7 @@ if st.session_state.get("report_ticker"):
                         return float(clean_str)
                     except Exception:
                         return 0.0
-                
+
                 # 1. Metric tổng quan
                 c_cb1, c_cb2, c_cb3, c_cb4 = st.columns(4)
                 c_cb1.metric("Vốn Hóa Thị Trường", report_data.get("market_cap", "N/A"))
@@ -734,10 +737,10 @@ if st.session_state.get("report_ticker"):
                 if not pd.isna(pd.to_numeric(beta_value, errors="coerce")):
                     beta_value = f"{float(beta_value):.2f}"
                 c_cb2.metric("Hệ Số Beta", beta_value)
-                
+
                 foreign_ownership = report_data.get("foreign_ownership", report_data.get("foreign_ratio", "N/A"))
                 shares_out = report_data.get("shares_outstanding", "N/A")
-                
+
                 c_cb3.metric("Sở Hữu Nước Ngoài", f"{foreign_ownership}%" if isinstance(foreign_ownership, (int, float)) else str(foreign_ownership))
                 c_cb4.metric("CP Lưu Hành", str(shares_out))
 
@@ -753,7 +756,7 @@ if st.session_state.get("report_ticker"):
                 if not isinstance(fin_ratios, list) or not fin_ratios:
                     legacy_ratios = report_data.get("financial_ratios", [])
                     fin_ratios = legacy_ratios if isinstance(legacy_ratios, list) else []
-                
+
                 ratio_years = [
                     int(year) for year in report_data.get("financial_years", years)
                     if str(year).isdigit()
@@ -881,7 +884,7 @@ if st.session_state.get("report_ticker"):
                     st.plotly_chart(
                         chart, use_container_width=True, key="financial_ratio_chart"
                     )
-                
+
                 if fin_ratios and years:
                     if not ratio_section_exists:
                         st.markdown("### 📊 CHỈ SỐ TÀI CHÍNH & HIỆU QUẢ HOẠT ĐỘNG")
@@ -951,9 +954,9 @@ if st.session_state.get("report_ticker"):
                     for idx_sec, section in enumerate(fin_sections):
                         section_title = clean_text(section.get('title', 'BÁO CÁO TÀI CHÍNH')).upper()
                         st.markdown(f"### 📋 {section_title}")
-                        
+
                         rows = section.get("rows", [])
-                        
+
                         if "TIỀN TỆ" in section_title or "CASH FLOW" in section_title:
                             clean_cf = get_clean_cash_flow_rows(ticker, years)
                             if clean_cf:
@@ -962,15 +965,15 @@ if st.session_state.get("report_ticker"):
                         if rows:
                             html_table = "<div class='summary-box' style='overflow-x: auto;'><table class='custom-table'>"
                             html_table += "<thead><tr><th style='min-width: 250px; text-align: left;'>Chỉ Tiêu Tài Chính</th>"
-                            for y in years: 
+                            for y in years:
                                 html_table += f"<th style='text-align: right;'>{y}</th>"
                             html_table += "</tr></thead><tbody>"
-                            
+
                             for row in rows:
                                 label = clean_text(row.get('label', ''))
                                 raw_values = row.get("values", [])
                                 values = raw_values
-                                
+
                                 if not ("TIỀN TỆ" in section_title or "CASH FLOW" in section_title):
                                     sec_years = section.get("years", years)
                                     if len(sec_years) == len(values) and sec_years != years:
@@ -978,28 +981,33 @@ if st.session_state.get("report_ticker"):
                                         values = [val_map.get(str(y), "-") for y in years]
 
                                 is_header = label.isupper() or any(k in label.upper() for k in [
-                                    "TỔNG", "LỢI NHUẬN", "TÀI SẢN", "NỢ PHẢI TRẢ", "VỐN CHỦ SỞ HỮU", 
+                                    "TỔNG", "LỢI NHUẬN", "TÀI SẢN", "NỢ PHẢI TRẢ", "VỐN CHỦ SỞ HỮU",
                                     "HOẠT ĐỘNG KINH DOANH", "HOẠT ĐỘNG ĐẦU TƯ", "HOẠT ĐỘNG TÀI CHÍNH", "LƯU CHUYỂN TIỀN THUẦN"
                                 ])
                                 style_label = "font-weight: 700; color: #f6c85f;" if is_header else ""
-                                
+
                                 html_table += f"<tr><td style='text-align: left; {style_label}'>{label}</td>"
-                                
+
                                 for i in range(len(years)):
                                     val = values[i] if i < len(years) else "-"
                                     if isinstance(val, (int, float)):
                                         formatted_val = f"{val:,.1f}" if isinstance(val, float) else f"{val:,}"
                                     else:
                                         formatted_val = str(val) if (pd.notna(val) and str(val) != 'nan') else "-"
-                                    
+
                                     html_table += f"<td style='text-align: right; {style_label}'>{formatted_val}</td>"
                                 html_table += "</tr>"
-                            
+
                             html_table += "</tbody></table></div><br>"
                             st.markdown(html_table, unsafe_allow_html=True)
 
                             # --- RENDER BIỂU ĐỒ BÊN DƯỚI BẢNG ---
                             if "CHỈ SỐ TÀI CHÍNH" in section_title:
+                                if fundamental_result.get("valuation_shares_changed"):
+                                    st.caption(
+                                        "EPS và BVPS trong bảng là số của nhà cung cấp theo số cổ phiếu từng năm; "
+                                        "tab Định giá dùng EPS/BVPS tính lại theo số cổ phiếu đang lưu hành."
+                                    )
                                 render_financial_ratio_chart()
                             elif "KINH DOANH" in section_title or "INCOME" in section_title:
                                 st.markdown("##### 📊 Biểu đồ Báo cáo doanh thu & Lợi nhuận")
@@ -1185,6 +1193,13 @@ if st.session_state.get("report_ticker"):
                     st.info("Chưa đủ dữ liệu chỉ số cơ bản để tính điểm.")
                 else:
                     st.metric("Điểm cơ bản", f"{fundamental_score}/100")
+                    coverage = fundamental_result.get("fundamental_coverage")
+                    missing = fundamental_result.get("fundamental_missing") or []
+                    if coverage is not None:
+                        st.caption(
+                            f"Độ phủ dữ liệu: {coverage}% chỉ tiêu"
+                            + (f" · thiếu: {', '.join(missing)}" if missing else "")
+                        )
                 fundamental_factors = fundamental_result["score_breakdown"][
                     "fundamental_factors"
                 ]
@@ -1197,7 +1212,7 @@ if st.session_state.get("report_ticker"):
                             "Điểm": (
                                 f"{factor['points']:+d}"
                                 if factor["points"] is not None
-                                else "Chưa tính"
+                                else "— (thiếu dữ liệu)"
                             ),
                         }
                         for factor in fundamental_factors
@@ -1213,17 +1228,35 @@ if st.session_state.get("report_ticker"):
                         st.warning(ai_comment)
                     else:
                         st.markdown(clean_text(ai_comment))
-            # --- TAB 4: ĐỊNH GIÁ & KỊCH BẢN ---
+                        # --- TAB 4: ĐỊNH GIÁ & KỊCH BẢN ---
             with tab4:
                 st.markdown(f'<div class="section-header">⚖️ {hoverify("Mô Hình Định Giá & Kịch Bản Giá Trị Hợp Lý")}</div>', unsafe_allow_html=True)
-                valuation_range = valuation_result.get("target_price_range")
-                valuation_price_label = (
-                    (
-                        f"{valuation_range[0] * 1000:,.0f} – "
-                        f"{valuation_range[1] * 1000:,.0f} đ"
-                    ).replace(",", ".")
-                    if valuation_range
-                    else "Chưa đủ dữ liệu"
+
+                def _vnd_range(pair):
+                    return (
+                        f"{pair[0] * 1000:,.0f} – {pair[1] * 1000:,.0f} đ"
+                        if pair
+                        else "Chưa đủ dữ liệu"
+                    )
+
+                def _upside_text(pair):
+                    return (
+                        f"{pair[0]:+.1%} đến {pair[1]:+.1%}"
+                        if pair
+                        else "Chưa đủ dữ liệu"
+                    )
+
+                valuation_label = valuation_result.get("valuation_label") or "P/E"
+                bank_primary = valuation_label != "P/E"
+                # P/E luôn đọc từ khóa riêng của P/E (ngân hàng: P/E chỉ là đối chiếu)
+                pe_range = valuation_result.get("valuation_pe_range") or (
+                    None if bank_primary else valuation_result.get("target_price_range")
+                )
+                pe_upside = valuation_result.get("valuation_pe_upside_range") or (
+                    None if bank_primary else valuation_result.get("upside_range")
+                )
+                pe_target = valuation_result.get("valuation_pe_target") or (
+                    None if bank_primary else valuation_result.get("target_price")
                 )
                 current_pe = valuation_result.get("valuation_current_pe")
                 current_pe_label = (
@@ -1240,18 +1273,12 @@ if st.session_state.get("report_ticker"):
                 historical_pe_count = valuation_result.get(
                     "valuation_history_count", 0
                 )
-                upside_range = valuation_result.get("upside_range")
-                upside_label = (
-                    f"{upside_range[0]:+.1%} đến {upside_range[1]:+.1%}"
-                    if upside_range
-                    else "Chưa đủ dữ liệu"
-                )
                 normalized_eps = valuation_result.get("valuation_eps")
                 normalized_eps_count = valuation_result.get("valuation_eps_count", 0)
                 eps_normalized = valuation_result.get("valuation_eps_normalized", False)
                 pb_target = valuation_result.get("valuation_pb_target")
                 pb_label = (
-                    f"{pb_target * 1000:,.0f} đ".replace(",", ".")
+                    f"{pb_target * 1000:,.0f} đ"
                     if pb_target is not None
                     else "Chưa đủ dữ liệu"
                 )
@@ -1262,13 +1289,42 @@ if st.session_state.get("report_ticker"):
                     if pb_reference is not None
                     else "Chưa đủ dữ liệu"
                 )
+                consensus = valuation_result.get("valuation_consensus")
 
+                # 1. NGÂN HÀNG: PHƯƠNG PHÁP CHÍNH P/B THEO ROE
+                if bank_primary:
+                    assumptions = valuation_result.get("valuation_bank_assumptions") or {}
+                    with st.container(border=True):
+                        st.markdown(f"#### Phương pháp chính: {valuation_label}")
+                        st.caption(
+                            "Giá trị ngân hàng gắn với vốn chủ sở hữu và khả năng sinh lời trên vốn, nên "
+                            "dùng P/B hợp lý = (ROE − g) / (COE − g). COE và g là giả định của nhóm; "
+                            "dải giá dùng COE ± 1 điểm %."
+                        )
+                        b1, b2, b3, b4 = st.columns(4)
+                        b1.metric(
+                            "ROE dùng để định giá",
+                            f"{assumptions['roe']:.1%}" if assumptions.get("roe") is not None else "N/A",
+                        )
+                        b2.metric(
+                            "P/B hợp lý (COE giữa)",
+                            f"{assumptions['fair_pb']:.2f} lần" if assumptions.get("fair_pb") is not None else "N/A",
+                        )
+                        b3.metric("Dải giá P/B theo ROE", _vnd_range(valuation_result.get("target_price_range")))
+                        b4.metric("Upside toàn dải", _upside_text(valuation_result.get("upside_range")))
+                        st.markdown(f"**Cách tính:** {hoverify(valuation_result.get('target_method') or 'Chưa đủ dữ liệu định giá.')}")
+
+                # 2. P/E LỊCH SỬ (PHƯƠNG PHÁP CHÍNH VỚI DOANH NGHIỆP THƯỜNG, ĐỐI CHIẾU VỚI NGÂN HÀNG)
                 with st.container(border=True):
-                    st.markdown("#### Khoảng giá tham khảo theo P/E chuẩn hóa")
+                    st.markdown(
+                        "#### Đối chiếu: khoảng giá theo P/E chuẩn hóa"
+                        if bank_primary
+                        else "#### Khoảng giá tham khảo theo P/E chuẩn hóa"
+                    )
                     st.caption(
-                        "EPS chuẩn hóa là trung vị EPS dương 3–5 năm gần nhất; dải giá "
-                        "dùng Q1–Q3 P/E lịch sử của chính doanh nghiệp, không phải so sánh "
-                        "với các công ty cùng ngành."
+                        "EPS chuẩn hóa là trung vị EPS dương 3–5 năm gần nhất, tính lại theo số cổ phiếu "
+                        "đang lưu hành; dải giá dùng Q1–Q3 P/E lịch sử của chính doanh nghiệp, không phải "
+                        "so sánh với các công ty cùng ngành."
                     )
                     c_dg1, c_dg2, c_dg3, c_dg4 = st.columns(4)
                     c_dg1.metric("P/E hiện tại", current_pe_label)
@@ -1277,35 +1333,37 @@ if st.session_state.get("report_ticker"):
                         f"{historical_pe_count} kỳ hợp lệ "
                         f"(P/E dương, tối đa 150; cần tối thiểu 3 kỳ)"
                     )
-                    c_dg3.metric("Dải giá P/E (Q1–Q3)", valuation_price_label)
-                    c_dg4.metric("Upside toàn dải", upside_label)
+                    c_dg3.metric("Dải giá P/E (Q1–Q3)", _vnd_range(pe_range))
+                    c_dg4.metric("Upside toàn dải P/E", _upside_text(pe_upside))
                     st.caption(
                         f"{'EPS chuẩn hóa' if eps_normalized else 'EPS gần nhất (chưa chuẩn hóa)'}: "
                         f"{normalized_eps:,.0f} đ/cp "
                         f"({normalized_eps_count} năm EPS dương được tìm thấy). "
-                        f"P/B đối chiếu: P/B trung vị {pb_reference_label} × BVPS gần nhất "
-                        f"→ {pb_label}; không gộp P/B vào giá P/E. Với BĐS, BVPS có thể "
+                        f"P/B lịch sử đối chiếu: P/B trung vị {pb_reference_label} × BVPS "
+                        f"→ {pb_label}. Các phương pháp không được gộp trọng số. Với BĐS, BVPS có thể "
                         "chưa phản ánh đúng giá trị đất và dự án."
                         if normalized_eps is not None
                         else (
-                            f"EPS: chưa đủ dữ liệu; P/B đối chiếu: "
+                            f"EPS: chưa đủ dữ liệu; P/B lịch sử đối chiếu: "
                             f"P/B trung vị {pb_reference_label} → {pb_label}. "
-                            "P/B không được gộp vào giá P/E; với BĐS, BVPS có thể chưa "
+                            "Các phương pháp không được gộp trọng số; với BĐS, BVPS có thể chưa "
                             "phản ánh đúng giá trị đất và dự án."
                         )
                     )
-                    st.markdown(f"**Cách tính:** {hoverify(valuation_result.get('target_method') or 'Chưa đủ dữ liệu định giá.')}")
+                    if not bank_primary:
+                        st.markdown(f"**Cách tính:** {hoverify(valuation_result.get('target_method') or 'Chưa đủ dữ liệu định giá.')}")
                     st.caption(
-                        (
-                            f"Giá giữa dải theo P/E trung vị: "
-                            f"{valuation_result['target_price'] * 1000:,.0f} đ. "
-                            "Đây là khoảng tham khảo, không phải giá mục tiêu chắc chắn."
-                        ).replace(",", ".")
-                        if valuation_result.get("target_price") is not None
+                        f"Giá giữa dải theo P/E trung vị: {pe_target * 1000:,.0f} đ. "
+                        "Đây là khoảng tham khảo, không phải giá mục tiêu chắc chắn."
+                        if pe_target is not None
                         else "Chưa có đủ dữ liệu để tính giá giữa dải P/E."
                     )
-                    if valuation_result.get("valuation_warning"):
-                        st.warning(valuation_result["valuation_warning"])
+
+                # 3. MỨC ĐỒNG THUẬN GIỮA CÁC PHƯƠNG PHÁP
+                if consensus is True:
+                    st.success("Phương pháp chính và phương pháp đối chiếu đồng thuận về hướng định giá.")
+                if valuation_result.get("valuation_warning"):
+                    st.warning(valuation_result["valuation_warning"])
 
                 st.markdown("##### 🤖 Nhận xét diễn giải định giá")
                 with st.container(border=True):
