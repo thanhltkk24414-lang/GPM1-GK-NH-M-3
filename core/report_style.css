@@ -214,6 +214,13 @@ body, table, td, th, h1, h2, h3, h4, p, div, span, ul, li, strong, header, secti
 .factor-table .score-cell { text-align: center; font-weight: bold; white-space: nowrap; }
 .factor-group-title { color: #2376b9; font-size: 8pt; margin: 3mm 0 1mm; }
 .factor-rule { display: block; color: #718294; font-size: 6.3pt; margin-top: .7mm; }
+/* Bảng giải thích điểm cơ bản: cột Tác động ngắn đặt thứ 3, cột chữ dài đặt cuối (cùng bố cục bảng kỹ thuật) */
+.factor-table.fundamental-factor-table { table-layout: fixed; }
+.factor-table.fundamental-factor-table th:first-child { width: 24%; }
+.factor-table.fundamental-factor-table th:nth-child(2) { width: 15%; }
+.factor-table.fundamental-factor-table th:nth-child(3) { width: 11%; text-align: center; }
+.factor-table.fundamental-factor-table th:last-child { width: 50%; }
+.factor-table.fundamental-factor-table td:nth-child(2) { white-space: nowrap; }
 .financial-table th:not(:first-child), .financial-table td:not(:first-child) { text-align: right; }
 .financial-table th:first-child { width: 42%; }
 .financial-block { margin: 3mm 0; }

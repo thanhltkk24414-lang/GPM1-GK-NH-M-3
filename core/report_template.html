@@ -156,21 +156,25 @@
     {% if score_breakdown.fundamental_factors %}
     <section class="report-section">
       <h2>GIẢI THÍCH ĐIỂM CƠ BẢN</h2>
-      <table class="factor-table">
-        <thead><tr><th>Tiêu chí</th><th>Dữ liệu</th><th>Diễn giải</th><th>Tác động</th></tr></thead>
+      <table class="factor-table fundamental-factor-table">
+        <thead><tr><th>Tiêu chí</th><th>Dữ liệu</th><th>Tác động</th><th>Nhận xét và quy tắc</th></tr></thead>
         <tbody>
           {% for factor in score_breakdown.fundamental_factors %}
           <tr>
             <td>{{ factor.label }}</td>
             <td>{{ factor.evidence }}</td>
-            <td>{{ factor.rule }}</td>
-            <td class="{% if factor.points is none %}not-applied{% elif factor.points > 0 %}positive{% elif factor.points < 0 %}negative{% endif %}">
-              {% if factor.points is not none %}{{ "%+d"|format(factor.points) }} điểm{% else %}Không chấm{% endif %}
+            <td class="score-cell {% if factor.points is none %}not-applied{% elif factor.points > 0 %}positive{% elif factor.points < 0 %}negative{% endif %}">
+              {% if factor.points is not none %}{{ "%+d"|format(factor.points) }}{% else %}—{% endif %}
+            </td>
+            <td>
+              {% if factor.points is none %}Chưa chấm do thiếu dữ liệu{% else %}{{ factor.text or "Không cộng/trừ điểm" }}{% endif %}
+              <span class="factor-rule">Quy tắc: {{ factor.rule }}</span>
             </td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
+      <p class="section-note">Cột Tác động là số điểm cộng/trừ vào mức nền 50; dấu — nghĩa là chỉ tiêu chưa có dữ liệu nên không được chấm.</p>
     </section>
     {% endif %}
 
