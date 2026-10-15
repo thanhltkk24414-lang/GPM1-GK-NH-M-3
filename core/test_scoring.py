@@ -228,12 +228,11 @@ class TechnicalScoringTests(unittest.TestCase):
         self.assertEqual(positive_result["scores"], negative_result["scores"])
         self.assertNotIn("news", positive_result["scores"])
         self.assertNotIn("headline", " ".join(positive_result["reasons"]).lower())
-        self.assertEqual(
+        self.assertAlmostEqual(
             positive_result["total_score"],
-            round(
-                positive_result["scores"]["fundamental"] * 0.5
-                + positive_result["scores"]["technical"] * 0.5
-            ),
+            positive_result["scores"]["fundamental"] * 0.5
+            + positive_result["scores"]["technical"] * 0.5,
+            places=1,
         )
 
     def test_missing_scoring_pillar_does_not_get_renormalized(self):
@@ -463,8 +462,9 @@ class TechnicalScoringTests(unittest.TestCase):
         self.assertEqual(result["target_price_range"], (4.38, 8.12))
         self.assertEqual(result["valuation_pb_reference"], 2)
         self.assertEqual(result["valuation_pb_target"], 6.25)
-        self.assertEqual(result["confidence"], "Trung bình")
-        self.assertIsNone(result["valuation_warning"])
+        # Chỉ 4 kỳ P/E (< 8) nên độ tin cậy phải là "Thấp"
+        self.assertEqual(result["confidence"], "Thấp")
+        self.assertIn("Chỉ có 4 kỳ P/E", result["valuation_warning"])
 
     def test_valuation_normalizes_mwg_eps_and_warns_on_large_range(self):
         result = compute_target_price(
@@ -569,6 +569,65 @@ class TechnicalScoringTests(unittest.TestCase):
         self.assertIn("nhóm ngân hàng", facts)
         self.assertIn("P/B và ROE", facts)
 
+class ShareAdjustmentAndBankTests(unittest.TestCase):
+    """Kiểm chứng bằng số liệu ACB in trong báo cáo ngày 14/10/2026."""
+
+    ACB_FUND = {
+        "symbol": "ACB",
+        "valuation_type": "bank",
+        "EPS": 3230,
+        "BVPS": 18401,
+        "historical_EPS": [4442, 4369, 3975, 3230],
+        "historical_PE": [4.93, 5.47, 6.49, 7.43],
+        "historical_PB": [1.27, 1.31, 1.38, 1.30],
+        "historical_net_profit": {
+            "2022": 13688.2, "2023": 16044.7, "2024": 16789.8, "2025": 15624.7,
+        },
+        "equity_latest": 94519.7e9,
+        "market_cap": 118119.99e9,
+        "shares_outstanding": 118119.99e9 / 20450,
+        "ROE": 0.1756,
+        "EPS_growth": -0.187,
+        "profit_growth": -0.0694,
+        "revenue_growth": -0.032,
+        "net_interest_margin": 0.0292,
+    }
+
+    def test_acb_eps_is_recomputed_on_current_share_count(self):
+        result = compute_target_price({"close": 20.45}, self.ACB_FUND)
+
+        self.assertAlmostEqual(result["valuation_current_pe"], 7.56, places=2)
+        low, high = result["upside_range"]
+        self.assertLess(high, 0)          # cả dải upside đều âm, không còn +8.8% đến +37.2%
+        self.assertLess(low, -0.25)
+        self.assertEqual(result["confidence"], "Thấp")
+        self.assertIn("lệch", result["valuation_warning"])
+        self.assertTrue(result["valuation_shares_changed"])
+        self.assertAlmostEqual(result["valuation_pb_target"], 21.36, places=1)
+
+    def test_valuation_blocked_when_share_count_contradicts_market_cap(self):
+        fund = dict(self.ACB_FUND, shares_outstanding=4_000_000_000)
+        result = compute_target_price({"close": 20.45}, fund)
+
+        self.assertIsNone(result["target_price"])
+        self.assertIn("không nhất quán", result["method"])
+
+    def test_bank_scores_profit_growth_and_bank_ratios(self):
+        result = get_recommendation({"symbol": "ACB", "close": 20.45}, self.ACB_FUND, use_ai=False)
+        factors = {f["label"]: f for f in result["score_breakdown"]["fundamental_factors"]}
+
+        self.assertIn("Tăng trưởng LNST", factors)
+        self.assertEqual(factors["Tăng trưởng LNST"]["points"], -7)
+        self.assertIn("Tăng trưởng thu nhập lãi thuần", factors)
+        self.assertIn("Biên lãi thuần (NIM)", factors)
+        self.assertFalse(factors["Tỷ lệ nợ xấu (NPL)"]["applied"])   # thiếu dữ liệu thì không chấm
+
+    def test_non_bank_without_share_data_keeps_old_behaviour(self):
+        result = compute_target_price(
+            {"close": 20.0}, {"EPS": 2000, "historical_PE": [12, 14, 16]}
+        )
+        self.assertFalse(result["valuation_shares_adjusted"])
+        self.assertEqual(result["target_price"], 28.0)
 
 if __name__ == "__main__":
     unittest.main()

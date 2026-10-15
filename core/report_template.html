@@ -209,7 +209,7 @@
           <tr><td>P/E trung vị lịch sử</td><td>{{ valuation_reference_pe or "Chưa có dữ liệu" }}</td></tr>
           <tr><td>Dải P/E Q1–Q3</td><td>{{ valuation_pe_low or "N/A" }} – {{ valuation_pe_high or "N/A" }}</td></tr>
           <tr><td>Số kỳ P/E hợp lệ</td><td>{{ valuation_history_count or 0 }}</td></tr>
-          <tr><td>Giá đối chiếu P/B × BVPS</td><td>{{ valuation_pb_target or "N/A" }} · P/B trung vị {{ valuation_pb_reference or "N/A" }} ({{ valuation_pb_count or 0 }} kỳ)</td></tr>
+          <tr><td>Giá đối chiếu P/B × BVPS</td><td>{{ valuation_pb_target or "N/A" }} · P/B trung vị {% if valuation_pb_reference is number %}{{ "%.2f"|format(valuation_pb_reference) }}{% else %}{{ valuation_pb_reference or "N/A" }}{% endif %} ({{ valuation_pb_count or 0 }} kỳ)</td></tr>
         </tbody>
       </table>
       {% if valuation_methods %}

@@ -1496,6 +1496,13 @@ def load_stock_report_data(
         latest_financial_year = str(max(map(int, net_profit_by_year)))
         fundamental_data["net_profit"] = net_profit_by_year[latest_financial_year]
         fundamental_data["net_profit_year"] = latest_financial_year
+        # BỔ SUNG: chuỗi LNST (tỷ đồng) để tính lại EPS theo số cổ phiếu hiện tại
+        fundamental_data["historical_net_profit"] = dict(net_profit_by_year)
+    equity_latest = financial_ratios.get("equity")
+    if equity_latest is not None and pd.notna(equity_latest):
+        # BỔ SUNG: vốn chủ sở hữu năm gần nhất (đồng) để tính lại BVPS
+        fundamental_data["equity_latest"] = float(equity_latest)
+
 
     news_feed = fetch_stock_news(ticker, limit=8, period="d")
     report_data.update({
@@ -1605,6 +1612,12 @@ def load_stock_report_data(
         ticker, exchange=symbol_metadata.get("exchange")
     )
     report_data = _apply_company_metadata(report_data, metadata)
+    # BỔ SUNG: đưa số cổ phiếu và vốn hóa vào dữ liệu chấm điểm để chuẩn hóa EPS/BVPS
+    if isinstance(report_data.get("fund"), dict) and metadata:
+        for key in ("shares_outstanding", "market_cap"):
+            if metadata.get(key) is not None:
+                report_data["fund"][key] = float(metadata[key])
+
     if (
         str(report_data.get("exchange", "")).strip().casefold()
         in {"", "n/a", "none"}

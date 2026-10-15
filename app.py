@@ -16,7 +16,7 @@ from core.report_pdf import (
 from core.scoring import get_recommendation, call_ai_for_tabs
 # Cấu hình trang rộng tối đa
 st.set_page_config(page_title="Hệ Thống Phân Tích Cổ Phiếu", layout="wide", initial_sidebar_state="collapsed")
-REPORT_DATA_REVISION = "cash-flow-news-refresh-v7-report-display"
+REPORT_DATA_REVISION = "share-adjusted-valuation-v8"
 
 
 @st.cache_resource

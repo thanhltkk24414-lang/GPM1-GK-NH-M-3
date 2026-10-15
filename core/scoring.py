@@ -35,6 +35,15 @@ MAX_VALID_PE = 150
 MIN_NORMALIZED_EPS_HISTORY = 3
 NORMALIZED_EPS_PERIODS = 5
 LARGE_UPSIDE_WARNING = 0.50  
+# ----- BỔ SUNG: kiểm tra số cổ phiếu, độ tin cậy, ngưỡng ngân hàng -----
+SHARE_TOLERANCE = 0.05          # lệch > 5% giữa các cách suy ra số CP thì cảnh báo
+MIN_PE_FOR_MEDIUM_CONFIDENCE = 8  # dưới 8 kỳ P/E thì độ tin cậy luôn là "Thấp"
+# Ngưỡng ngân hàng là GIẢ ĐỊNH của nhóm, cần thay bằng trung vị ngành có nguồn.
+BANK_NIM_HIGH, BANK_NIM_LOW = 0.035, 0.025
+BANK_NPL_GOOD, BANK_NPL_BAD = 0.015, 0.03
+BANK_CAR_MIN = 0.09
+BANK_COVERAGE_MIN = 0.70
+
 
 VALUATION_SCOPE_NOTE = (
     "Dải giá tham khảo = trung vị EPS dương tối đa 5 năm × Q1–Q3 P/E lịch sử "
@@ -418,9 +427,68 @@ def _valid_positive_history(fund, field, nested_field):
     return values
 
 
+def _linear_pts(value, full_at, cap):
+    """Điểm tuyến tính có chặn: value = full_at thì được đủ cap điểm, âm thì trừ tương ứng."""
+    return int(round(max(-cap, min(cap, value / full_at * cap))))
+
+
+def _bank_factors(f):
+    """Chấm các chỉ số đặc thù ngân hàng. Thiếu dữ liệu thì ghi rõ, không chấm thay."""
+    fs = []
+    nim = f.get("net_interest_margin")
+    npl = f.get("npl")
+    car = f.get("capital_adequacy_ratio")
+    coverage = f.get("loan_loss_coverage_ratio")
+
+    if _ok(nim):
+        if nim >= BANK_NIM_HIGH:
+            pts, text = 10, f"NIM {nim:.2%} cao: biên lãi thuần tốt"
+        elif nim < BANK_NIM_LOW:
+            pts, text = -10, f"NIM {nim:.2%} thấp: biên lãi thuần bị thu hẹp"
+        else:
+            pts, text = 0, None
+        fs.append(_factor("Biên lãi thuần (NIM)", f"{nim:.2%}",
+                          f"NIM >= {BANK_NIM_HIGH:.1%}: +10; < {BANK_NIM_LOW:.1%}: -10 (ngưỡng giả định của nhóm).",
+                          pts, text, core=True))
+    else:
+        fs.append(_factor("Biên lãi thuần (NIM)", "Chưa có dữ liệu", "Không được tính."))
+
+    if _ok(npl):
+        if npl < BANK_NPL_GOOD:
+            pts, text = 10, f"Nợ xấu {npl:.2%} thấp: chất lượng tài sản tốt"
+        elif npl > BANK_NPL_BAD:
+            pts, text = -15, f"Nợ xấu {npl:.2%} cao: rủi ro chất lượng tài sản"
+        else:
+            pts, text = 0, None
+        fs.append(_factor("Tỷ lệ nợ xấu (NPL)", f"{npl:.2%}",
+                          f"NPL < {BANK_NPL_GOOD:.1%}: +10; > {BANK_NPL_BAD:.1%}: -15 (ngưỡng giả định của nhóm).",
+                          pts, text, core=True))
+    else:
+        fs.append(_factor("Tỷ lệ nợ xấu (NPL)", "Chưa có dữ liệu", "Không được tính."))
+
+    if _ok(car):
+        pts = -15 if car < BANK_CAR_MIN else 0
+        text = f"CAR {car:.2%} dưới {BANK_CAR_MIN:.0%}: đệm vốn mỏng" if pts else None
+        fs.append(_factor("Hệ số an toàn vốn (CAR)", f"{car:.2%}",
+                          f"CAR < {BANK_CAR_MIN:.0%}: -15.", pts, text, core=True))
+    else:
+        fs.append(_factor("Hệ số an toàn vốn (CAR)", "Chưa có dữ liệu", "Không được tính."))
+
+    if _ok(coverage):
+        pts = -10 if coverage < BANK_COVERAGE_MIN else 0
+        text = f"Bao phủ nợ xấu {coverage:.0%} thấp: dự phòng mỏng" if pts else None
+        fs.append(_factor("Tỷ lệ bao phủ nợ xấu", f"{coverage:.0%}",
+                          f"Bao phủ < {BANK_COVERAGE_MIN:.0%}: -10.", pts, text, core=True))
+    else:
+        fs.append(_factor("Tỷ lệ bao phủ nợ xấu", "Chưa có dữ liệu", "Không được tính."))
+    return fs
+
+
 def _fundamental_factors(f):
     fs = [_factor(*BASE_FACTOR, points=0)]
+    is_bank = f.get("valuation_type") == "bank"
     roe, eps_g = f.get("ROE"), f.get("EPS_growth")
+    profit_g = f.get("profit_growth")
     rev_g, de = f.get("revenue_growth"), f.get("debt_to_equity")
 
     # 1. ROE
@@ -437,33 +505,46 @@ def _fundamental_factors(f):
     else:
         fs.append(_factor("ROE", "Chưa có dữ liệu", "Không được tính."))
 
-    # 2. Tăng trưởng EPS
-    if _ok(eps_g):
-        if eps_g > 0.15:
-            pts, text = 15, f"EPS tăng trưởng mạnh {eps_g:.1%} so với cùng kỳ"
-        elif eps_g < 0:
-            pts, text = -15, f"EPS suy giảm {abs(eps_g):.1%} so với cùng kỳ"
+    # 2. Tăng trưởng lợi nhuận.
+    # Dùng LNST thay EPS khi là ngân hàng hoặc khi số cổ phiếu thay đổi (EPS bị pha loãng),
+    # vì EPS nhà cung cấp chưa điều chỉnh theo số cổ phiếu hiện tại.
+    use_profit = _ok(profit_g) and (is_bank or f.get("shares_changed") or not _ok(eps_g))
+    growth = profit_g if use_profit else eps_g
+    growth_name = "LNST" if use_profit else "EPS"
+    growth_label = f"Tăng trưởng {growth_name}"
+    if _ok(growth):
+        pts = _linear_pts(growth, 0.15, 15)
+        if pts > 0:
+            text = f"{growth_name} tăng {growth:.1%} so với năm trước"
+        elif pts < 0:
+            text = f"{growth_name} giảm {abs(growth):.1%} so với năm trước"
         else:
-            pts, text = 0, None
-        fs.append(_factor("Tăng trưởng EPS", f"{eps_g:+.1%}", "Tăng > 15%: +15; giảm: -15.", pts, text, core=True))
+            text = None
+        fs.append(_factor(growth_label, f"{growth:+.1%}",
+                          "Tuyến tính: +15% trở lên = +15 điểm; -15% trở xuống = -15 điểm.",
+                          pts, text, core=True))
     else:
-        fs.append(_factor("Tăng trưởng EPS", "Chưa có dữ liệu", "Không được tính."))
+        fs.append(_factor("Tăng trưởng lợi nhuận", "Chưa có dữ liệu", "Không được tính."))
 
-    # 3. Tăng trưởng doanh thu
+    # 3. Tăng trưởng doanh thu (ngân hàng: thu nhập lãi thuần)
+    income_label = "thu nhập lãi thuần" if is_bank else "doanh thu"
     if _ok(rev_g):
-        if rev_g > 0.10:
-            pts, text = 10, f"Doanh thu tăng trưởng {rev_g:.1%}"
-        elif rev_g < 0:
-            pts, text = -10, f"Doanh thu sụt giảm {abs(rev_g):.1%}"
+        pts = _linear_pts(rev_g, 0.10, 10)
+        if pts > 0:
+            text = f"{income_label.capitalize()} tăng {rev_g:.1%}"
+        elif pts < 0:
+            text = f"{income_label.capitalize()} giảm {abs(rev_g):.1%}"
         else:
-            pts, text = 0, None
-        fs.append(_factor("Tăng trưởng doanh thu", f"{rev_g:+.1%}", "Tăng > 10%: +10; giảm: -10.", pts, text, core=True))
+            text = None
+        fs.append(_factor(f"Tăng trưởng {income_label}", f"{rev_g:+.1%}",
+                          "Tuyến tính: +10% trở lên = +10 điểm; -10% trở xuống = -10 điểm.",
+                          pts, text, core=True))
     else:
-        fs.append(_factor("Tăng trưởng doanh thu", "Chưa có dữ liệu", "Không được tính."))
+        fs.append(_factor(f"Tăng trưởng {income_label}", "Chưa có dữ liệu", "Không được tính."))
 
-    # 4. Đòn bẩy tài chính
-    if f.get("valuation_type") == "bank":
-        fs.append(_factor("Đòn bẩy tài chính", "Ngân hàng", "Đặc thù ngành tài chính: dùng hệ thống CAR và NPL thay vì D/E."))
+    # 4. Đòn bẩy (doanh nghiệp thường) hoặc chỉ số đặc thù (ngân hàng)
+    if is_bank:
+        fs.extend(_bank_factors(f))
     elif _ok(de):
         if de > 2.0:
             pts, text = -15, f"Tỷ lệ Nợ/VCSH cao {de:.1f} lần: rủi ro tài chính lớn"
@@ -475,6 +556,7 @@ def _fundamental_factors(f):
     else:
         fs.append(_factor("Cấu trúc Nợ/VCSH", "Chưa có dữ liệu", "Không được tính."))
     return fs
+
 
 
 def score_technical(t):
@@ -530,6 +612,80 @@ def get_dynamic_weights(fund=None):
 
 
 # ======================= 4. ĐỊNH GIÁ =======================
+def _share_adjusted_inputs(fund, close):
+    """Tính lại EPS/BVPS theo SỐ CỔ PHIẾU HIỆN TẠI.
+
+    EPS/BVPS lịch sử của nhà cung cấp tính trên số cổ phiếu từng năm. Sau các đợt chia
+    cổ tức bằng cổ phiếu, đem trung vị EPS cũ nhân P/E rồi so với giá hôm nay sẽ thổi phồng
+    upside. Hàm trả về None nếu thiếu số cổ phiếu hoặc lợi nhuận lịch sử (giữ cách cũ).
+
+    Đơn vị: net profit tính bằng tỷ đồng, equity_latest và market_cap tính bằng đồng,
+    close tính bằng nghìn đồng.
+    """
+    fund = fund or {}
+    try:
+        shares = float(fund.get("shares_outstanding") or 0)
+    except (TypeError, ValueError):
+        shares = 0
+    profit_by_year = fund.get("historical_net_profit") or {}
+    if shares <= 0 or not isinstance(profit_by_year, dict) or not profit_by_year:
+        return None
+
+    ordered = []
+    for year, value in profit_by_year.items():
+        try:
+            ordered.append((int(year), float(value)))
+        except (TypeError, ValueError):
+            continue
+    ordered.sort()
+    if not ordered:
+        return None
+
+    eps_history = [value * 1e9 / shares for _, value in ordered if value > 0]
+    latest_profit = ordered[-1][1]
+    latest_eps = latest_profit * 1e9 / shares if latest_profit > 0 else None
+
+    bvps = None
+    try:
+        equity = float(fund.get("equity_latest"))
+        if equity > 0:
+            bvps = equity / shares
+    except (TypeError, ValueError):
+        pass
+
+    warnings = []
+    vendor_gap = None
+    try:
+        vendor_eps = float(fund.get("EPS"))
+        if vendor_eps > 0 and latest_profit > 0:
+            vendor_gap = abs(latest_profit * 1e9 / vendor_eps / shares - 1)
+    except (TypeError, ValueError):
+        pass
+    if vendor_gap is not None and vendor_gap > SHARE_TOLERANCE:
+        warnings.append(
+            f"EPS của nhà cung cấp lệch {vendor_gap:.0%} so với số cổ phiếu đang lưu hành; "
+            "đã tính lại EPS và BVPS theo số cổ phiếu hiện tại."
+        )
+
+    market_gap = None
+    try:
+        market_cap = float(fund.get("market_cap"))
+        if market_cap > 0 and close and close > 0:
+            market_gap = abs(market_cap / (close * 1000) / shares - 1)
+    except (TypeError, ValueError):
+        pass
+
+    return {
+        "shares": shares,
+        "eps_history": eps_history,
+        "latest_eps": latest_eps,
+        "bvps": bvps,
+        "shares_changed": vendor_gap is not None and vendor_gap > SHARE_TOLERANCE,
+        "market_cap_gap": market_gap,
+        "warnings": warnings,
+    }
+
+
 def compute_target_price(tech, fund):
     history = _valid_historical_pe(fund)
     median_pe = statistics.median(history) if history else None
@@ -543,6 +699,9 @@ def compute_target_price(tech, fund):
         bvps = None
     if bvps is None or bvps <= 0:
         bvps = bvps_history[-1] if bvps_history else None
+    adjusted = _share_adjusted_inputs(fund, (tech or {}).get("close"))
+    if adjusted and adjusted["bvps"]:
+        bvps = adjusted["bvps"]
     pb_target = (
         median_pb * bvps / 1000
         if (
@@ -558,6 +717,8 @@ def compute_target_price(tech, fund):
         latest_eps = float((fund or {}).get("EPS"))
     except (TypeError, ValueError):
         latest_eps = None
+    if adjusted and adjusted["latest_eps"]:
+        latest_eps = adjusted["latest_eps"]
     current_pe = (
         close * 1000 / latest_eps
         if _ok(close, latest_eps) and close > 0 and latest_eps > 0
@@ -565,6 +726,8 @@ def compute_target_price(tech, fund):
     )
 
     eps_history = _valid_positive_history(fund, "historical_EPS", "EPS")
+    if adjusted and adjusted["eps_history"]:
+        eps_history = adjusted["eps_history"]
     eps_history = eps_history[-NORMALIZED_EPS_PERIODS:]
     normalized_eps = (
         statistics.median(eps_history)
@@ -630,6 +793,11 @@ def compute_target_price(tech, fund):
         }
 
     if not _ok(close) or close <= 0: return unavailable("thiếu giá hiện tại.")
+    if adjusted and adjusted["market_cap_gap"] is not None and adjusted["market_cap_gap"] > SHARE_TOLERANCE:
+        return unavailable(
+            f"số cổ phiếu lưu hành lệch {adjusted['market_cap_gap']:.0%} so với vốn hóa ÷ giá; "
+            "dữ liệu không nhất quán nên không xuất giá mục tiêu."
+        )
     if normalized_eps is None or normalized_eps <= 0:
         return unavailable("EPS chuẩn hóa hoặc EPS gần nhất không dương.")
     if len(history) < MIN_PE_HISTORY: return unavailable(f"chỉ có {len(history)} kỳ P/E hợp lệ.")
@@ -642,7 +810,12 @@ def compute_target_price(tech, fund):
     upside_low = target_low / close - 1
     upside_high = target_high / close - 1
     upside = round(target / close - 1, 4)
-    warnings = []
+    warnings = list(adjusted["warnings"]) if adjusted else []
+    if len(history) < MIN_PE_FOR_MEDIUM_CONFIDENCE:
+        warnings.append(
+            f"Chỉ có {len(history)} kỳ P/E lịch sử (cần ít nhất {MIN_PE_FOR_MEDIUM_CONFIDENCE}); "
+            "dải Q1–Q3 chỉ mang tính tham khảo."
+        )
     if not eps_is_normalized:
         warnings.append(
             f"Chỉ có {len(eps_history)} năm EPS dương; giá P/E tạm dùng EPS gần nhất, "
@@ -668,6 +841,7 @@ def compute_target_price(tech, fund):
     )
     eps_basis = (
         f"trung vị {len(eps_history)} năm EPS dương"
+        + (" (tính lại theo số cổ phiếu hiện tại)" if adjusted else "")
         if eps_is_normalized
         else f"EPS gần nhất (chỉ có {eps_count} năm EPS dương, chưa đủ chuẩn hóa)"
     )
@@ -733,7 +907,10 @@ def compute_target_price(tech, fund):
         "valuation_pb_count": len(pb_history),
         "valuation_pb_target": pb_target,
         "valuation_warning": valuation_warning,
+        "valuation_shares_adjusted": bool(adjusted),
+        "valuation_shares_changed": bool(adjusted and adjusted["shares_changed"]),
     }
+
 
 
 # ======================= 5. KHUYẾN NGHỊ =======================
@@ -788,17 +965,20 @@ def _decide(total, upside, upside_range=None):
 
 def get_recommendation(tech, fund, news=None, use_ai=True):
     tech, fund = tech or {}, normalize_fund(fund)
+    share_check = _share_adjusted_inputs(fund, tech.get("close"))
+    if share_check and share_check["shares_changed"]:
+        fund["shares_changed"] = True   # EPS bị pha loãng -> chấm tăng trưởng theo LNST
     weights = get_dynamic_weights(fund)
     factor_groups = {
         "technical": _technical_factors(tech),
         "fundamental": _fundamental_factors(fund),
     }
     scores = {k: _group_score(v) for k, v in factor_groups.items()}
-    total = (
-        _clamp(sum(weights[name] * scores[name] for name in weights))
-        if all(scores.get(name) is not None for name in weights)
-        else None
-    )
+    # Giữ 1 chữ số thập phân: so ngưỡng bằng số chưa làm tròn (41.5 không bị đẩy thành 42).
+    total = None
+    if all(scores.get(name) is not None for name in weights):
+        total_raw = max(0.0, min(100.0, sum(weights[name] * scores[name] for name in weights)))
+        total = int(total_raw) if float(total_raw).is_integer() else round(total_raw, 1)
 
     reasons, risks = [], []
     for key in ("fundamental", "technical"):
