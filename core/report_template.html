@@ -28,8 +28,8 @@
       <tbody>
         <tr>
           <td><span>Giá hiện tại</span><strong>{{ current_price or "N/A" }}</strong></td>
-          <td><span>Dải giá tham khảo P/E</span><strong>{{ target_price_range or "Chưa đủ dữ liệu" }}</strong></td>
-          <td><span>Upside theo dải P/E</span><strong>{{ upside_range or "N/A" }}</strong></td>
+          <td><span>Dải giá tham khảo {{ valuation_label or "P/E" }}</span><strong>{{ target_price_range or "Chưa đủ dữ liệu" }}</strong></td>
+          <td><span>Upside theo dải {{ valuation_label or "P/E" }}</span><strong>{{ upside_range or "N/A" }}</strong></td>
         </tr>
       </tbody>
     </table>
@@ -149,6 +149,7 @@
     <h1 class="page-title">PHÂN TÍCH CƠ BẢN</h1>
     <p class="section-note">
       Điểm cơ bản: {{ fundamental_score if fundamental_score is not none else "Chưa đủ dữ liệu" }}{% if fundamental_score is not none %}/100{% endif %}
+      {% if fundamental_coverage is number %}· Độ phủ dữ liệu: {{ fundamental_coverage }}% chỉ tiêu{% endif %}
       · Vốn hóa: {{ market_cap or "N/A" }} · Beta: {{ beta or "N/A" }}
     </p>
     {% if financial_error %}<div class="empty-note">Không tải được báo cáo tài chính: {{ financial_error }}</div>{% endif %}
@@ -189,6 +190,9 @@
           {% endfor %}
         </tbody>
       </table>
+      {% if section.title == "CHỈ SỐ TÀI CHÍNH" and valuation_shares_changed %}
+      <p class="section-note">EPS và BVPS trong bảng là số của nhà cung cấp, tính trên số cổ phiếu từng năm. Phần định giá dùng EPS {{ valuation_eps_display }} và BVPS {{ valuation_bvps_display }} tính lại theo số cổ phiếu đang lưu hành, nên hai nơi có thể khác nhau.</p>
+      {% endif %}
     </section>
     {% endfor %}
     {% if not financial_sections %}
@@ -204,16 +208,20 @@
       <table class="valuation-table">
         <tbody>
           <tr><td>Phương pháp chính</td><td>{{ target_method or "P/E chuẩn hóa lịch sử" }}</td></tr>
-          <tr><td>Dải giá tham khảo P/E (Q1–Q3)</td><td><strong>{{ target_price_range or "Chưa đủ dữ liệu" }}</strong></td></tr>
-          <tr><td>Upside theo dải P/E</td><td>{{ upside_range or "N/A" }}</td></tr>
-          <tr><td>Giá giữa dải theo P/E trung vị</td><td>{{ target_price or "Chưa đủ dữ liệu" }}</td></tr>
+          <tr><td>Dải giá tham khảo {{ valuation_label or "P/E" }}</td><td><strong>{{ target_price_range or "Chưa đủ dữ liệu" }}</strong></td></tr>
+          <tr><td>Upside theo dải {{ valuation_label or "P/E" }}</td><td>{{ upside_range or "N/A" }}</td></tr>
+          <tr><td>Giá giữa dải</td><td>{{ target_price or "Chưa đủ dữ liệu" }}</td></tr>
           <tr><td>Độ tin cậy</td><td>{{ target_confidence or "Chưa xác định" }}</td></tr>
-          <tr><td>EPS dùng để định giá</td><td>{% if valuation_eps is defined and valuation_eps is not none %}{{ valuation_eps|round|int }} đ/cp · {{ valuation_eps_basis or "Chưa xác định" }}{% else %}N/A{% endif %}</td></tr>
-          <tr><td>P/E tại giá hiện tại</td><td>{{ valuation_current_pe|round(2) if valuation_current_pe is defined and valuation_current_pe is not none else "N/A" }}</td></tr>
-          <tr><td>P/E trung vị lịch sử</td><td>{{ valuation_reference_pe or "Chưa có dữ liệu" }}</td></tr>
-          <tr><td>Dải P/E Q1–Q3</td><td>{{ valuation_pe_low or "N/A" }} – {{ valuation_pe_high or "N/A" }}</td></tr>
+          <tr><td>Các phương pháp đồng thuận?</td><td>{{ valuation_consensus_display or "Chưa đủ dữ liệu để đối chiếu" }}</td></tr>
+          {% if valuation_label and valuation_label != "P/E" %}
+          <tr><td>Đối chiếu: dải giá P/E (Q1–Q3)</td><td>{{ valuation_pe_range_display or "Chưa đủ dữ liệu" }} · upside {{ valuation_pe_upside_display or "N/A" }}</td></tr>
+          {% endif %}
+          <tr><td>EPS dùng cho P/E</td><td>{{ valuation_eps_display or "N/A" }} · {{ valuation_eps_basis or "Chưa xác định" }}</td></tr>
+          <tr><td>P/E tại giá hiện tại</td><td>{% if valuation_current_pe is number %}{{ "%.2f"|format(valuation_current_pe) }}{% else %}N/A{% endif %}</td></tr>
+          <tr><td>P/E trung vị lịch sử</td><td>{% if valuation_reference_pe is number %}{{ "%.2f"|format(valuation_reference_pe) }}{% else %}Chưa có dữ liệu{% endif %}</td></tr>
+          <tr><td>Dải P/E Q1–Q3</td><td>{% if valuation_pe_low is number and valuation_pe_high is number %}{{ "%.2f"|format(valuation_pe_low) }} – {{ "%.2f"|format(valuation_pe_high) }}{% else %}N/A{% endif %}</td></tr>
           <tr><td>Số kỳ P/E hợp lệ</td><td>{{ valuation_history_count or 0 }}</td></tr>
-          <tr><td>Giá đối chiếu P/B × BVPS</td><td>{{ valuation_pb_target or "N/A" }} · P/B trung vị {% if valuation_pb_reference is number %}{{ "%.2f"|format(valuation_pb_reference) }}{% else %}{{ valuation_pb_reference or "N/A" }}{% endif %} ({{ valuation_pb_count or 0 }} kỳ)</td></tr>
+          <tr><td>Giá đối chiếu P/B lịch sử × BVPS</td><td>{{ valuation_pb_target or "N/A" }} · P/B trung vị {% if valuation_pb_reference is number %}{{ "%.2f"|format(valuation_pb_reference) }}{% else %}{{ valuation_pb_reference or "N/A" }}{% endif %} ({{ valuation_pb_count or 0 }} kỳ)</td></tr>
         </tbody>
       </table>
       {% if valuation_methods %}
@@ -226,7 +234,7 @@
         </tbody>
       </table>
       {% endif %}
-      <p class="section-note">Dải giá P/E là khoảng tham khảo từ dữ liệu lịch sử, không phải giá trị chắc chắn. P/B × BVPS chỉ dùng đối chiếu riêng, không được gộp trọng số vào kết quả P/E; với doanh nghiệp bất động sản, BVPS có thể chưa phản ánh đúng giá trị đất và dự án.</p>
+      <p class="section-note">Dải giá là khoảng tham khảo từ dữ liệu lịch sử và giả định, không phải giá trị chắc chắn. Doanh nghiệp thường dùng P/E lịch sử làm phương pháp chính; ngân hàng dùng P/B theo ROE (COE và g là giả định của nhóm). Các phương pháp đối chiếu trình bày riêng, không gộp trọng số; khi chúng trái chiều, báo cáo không kết luận cổ phiếu đắt hay rẻ. Với doanh nghiệp bất động sản, BVPS có thể chưa phản ánh đúng giá trị đất và dự án.</p>
     </section>
 
     <section class="report-section news-section">

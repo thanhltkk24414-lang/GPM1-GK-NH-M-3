@@ -24,17 +24,17 @@ def _load_ai_env():
 _load_ai_env()
 
 # ======================= 1. CẤU HÌNH & NGƯỠNG ĐIỂM =======================
-BUY_THRESHOLD = 65      
-SELL_THRESHOLD = 45     
+BUY_THRESHOLD = 65
+SELL_THRESHOLD = 45
 
-BUY_MIN_UPSIDE = 0.15   
-SELL_MAX_UPSIDE = -0.15 
+BUY_MIN_UPSIDE = 0.15
+SELL_MAX_UPSIDE = -0.15
 
-MIN_PE_HISTORY = 3      
+MIN_PE_HISTORY = 3
 MAX_VALID_PE = 150
 MIN_NORMALIZED_EPS_HISTORY = 3
 NORMALIZED_EPS_PERIODS = 5
-LARGE_UPSIDE_WARNING = 0.50  
+LARGE_UPSIDE_WARNING = 0.50
 # ----- BỔ SUNG: kiểm tra số cổ phiếu, độ tin cậy, ngưỡng ngân hàng -----
 SHARE_TOLERANCE = 0.05          # lệch > 5% giữa các cách suy ra số CP thì cảnh báo
 MIN_PE_FOR_MEDIUM_CONFIDENCE = 8  # dưới 8 kỳ P/E thì độ tin cậy luôn là "Thấp"
@@ -43,6 +43,16 @@ BANK_NIM_HIGH, BANK_NIM_LOW = 0.035, 0.025
 BANK_NPL_GOOD, BANK_NPL_BAD = 0.015, 0.03
 BANK_CAR_MIN = 0.09
 BANK_COVERAGE_MIN = 0.70
+# ----- BỔ SUNG ĐỢT 3: định giá ngân hàng, đồng thuận phương pháp, xu hướng nhiều năm -----
+# Ngân hàng định giá chính bằng P/B hợp lý = (ROE - g) / (COE - g). COE và g là GIẢ ĐỊNH của nhóm.
+BANK_COE = 0.14                 # chi phí vốn chủ sở hữu (mức giữa)
+BANK_COE_STEP = 0.01            # dải giá dùng COE ± 1 điểm %
+BANK_LONG_GROWTH = 0.05         # tăng trưởng dài hạn g
+METHOD_DIVERGENCE_LIMIT = 0.25  # phương pháp chính và đối chiếu lệch > 25% (hoặc trái dấu upside) = không đồng thuận
+TREND_YEARS = 3                 # xu hướng: so năm gần nhất với tối đa 3 năm trước
+ROE_TREND_BIG_DROP, ROE_TREND_DROP, ROE_TREND_RISE = 0.05, 0.02, 0.03   # điểm % ROE
+NIM_TREND_DROP, NIM_TREND_RISE = 0.005, 0.003                          # 0,5 và 0,3 điểm % NIM
+MIN_FUNDAMENTAL_COVERAGE = 0.70  # dưới 70% chỉ tiêu có dữ liệu thì ghi rủi ro "kết luận bị giới hạn"
 
 
 VALUATION_SCOPE_NOTE = (
@@ -72,7 +82,7 @@ def _price_vnd(x):
         return "N/A"
     try:
         val = float(x)
-        # Nếu giá trị đã tính theo nghìn đồng (ví dụ 20.6) thì nhân 1000, 
+        # Nếu giá trị đã tính theo nghìn đồng (ví dụ 20.6) thì nhân 1000,
         # còn nếu đã là đồng lớn (>1000) thì giữ nguyên.
         if val < 1000:
             val *= 1000
@@ -239,7 +249,30 @@ def _technical_factors(t):
 
     add_ma_factor("Giá so với MA20", close, ma20, 10, "Giá > MA20: 100; ngược lại: 0.")
     add_ma_factor("MA20 so với MA50", ma20, ma50, 10, "MA20 > MA50: 100; ngược lại: 0.")
-    add_ma_factor("MA50 so với MA200", ma50, ma200, 15, "MA50 > MA200: 100; ngược lại: 0.")
+    # BỔ SUNG: MA50 trên MA200 chỉ được điểm tối đa khi giá giữ trên MA50 và MA50 không dốc xuống
+    ma50_slope = t.get("ma50_slope")
+    if _ok(ma50, ma200) and ma50 > ma200:
+        price_below_ma50 = _ok(close) and close < ma50
+        ma50_falling = ma50_slope is not None and ma50_slope < 0
+        slope_text = f"; MA50 10 phiên {ma50_slope:+.2%}" if ma50_slope is not None else ""
+        if price_below_ma50 and ma50_falling:
+            ma_score, ma_note = 40, (
+                "MA50 vẫn trên MA200 nhưng đang dốc xuống và giá nằm dưới MA50: "
+                "xu hướng tăng trung hạn đang suy yếu."
+            )
+        elif price_below_ma50 or ma50_falling:
+            ma_score, ma_note = 60, None
+        else:
+            ma_score, ma_note = 100, "MA50 trên MA200 và giá giữ trên MA50, ủng hộ xu hướng tăng trung hạn."
+        fs.append(_technical_factor(
+            "MA50 so với MA200", "Xu hướng", 15, ma_score,
+            f"{_price_vnd(ma50)} > {_price_vnd(ma200)}{slope_text}",
+            "MA50 > MA200, giá ≥ MA50 và MA50 không dốc xuống: 100; chỉ một điều kiện yếu: 60; "
+            "giá < MA50 và MA50 dốc xuống: 40; MA50 ≤ MA200: 0.",
+            ma_note,
+        ))
+    else:
+        add_ma_factor("MA50 so với MA200", ma50, ma200, 15, "MA50 > MA200: 100; ngược lại: 0.")
 
     ma_cross = t.get("ma50_ma200_cross")
     if ma_cross is None:
@@ -350,13 +383,22 @@ def _technical_factors(t):
             else 55 if support_distance <= 0.15
             else 35
         )
+        # BỔ SUNG: đang trong xu hướng giảm thì gần đáy không được thưởng điểm cao (tránh "bắt dao rơi")
+        downtrend = _ok(close, ma50) and close < ma50 and (
+            t.get("ma50_slope") is None or t.get("ma50_slope") < 0
+        )
+        support_evidence = f"Cách đáy 60 phiên {support_distance:.2%}"
+        if downtrend and support_score > 50:
+            support_score = 50
+            support_evidence += "; đang dưới MA50 nên giới hạn 50 điểm"
         fs.append(_technical_factor(
             "Khoảng cách tới hỗ trợ 60 phiên",
             "Hỗ trợ/kháng cự",
             5,
             support_score,
-            f"Cách đáy 60 phiên {support_distance:.2%}",
-            "Gần vùng đáy 60 phiên được điểm cao hơn; thủng đáy tham chiếu: 0; vùng này không phải hỗ trợ chắc chắn.",
+            support_evidence,
+            "Gần vùng đáy 60 phiên được điểm cao hơn; thủng đáy tham chiếu: 0; giá dưới MA50 và MA50 không đi lên "
+            "thì tối đa 50; vùng này không phải hỗ trợ chắc chắn.",
         ))
     else:
         fs.append(_technical_factor(
@@ -427,6 +469,47 @@ def _valid_positive_history(fund, field, nested_field):
     return values
 
 
+def _ratio_history(f, key):
+    """Chuỗi tỷ lệ nhiều năm (cũ -> mới) ở dạng thập phân.
+    Nếu nguồn trả dạng % (26.5 thay vì 0.265) thì tự đổi sang thập phân."""
+    values = []
+    for value in (f or {}).get(key) or []:
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            continue
+        if value == value:  # bỏ NaN
+            values.append(value)
+    if values and max(abs(v) for v in values) > 1.5:
+        values = [v / 100 for v in values]
+    return values
+
+
+def _series_change(values, years=None):
+    """Trả về (đầu kỳ, cuối kỳ, chênh lệch, số năm) giữa năm gần nhất và tối đa TREND_YEARS năm trước."""
+    years = years or TREND_YEARS
+    if len(values) < 2:
+        return None
+    start_index = max(0, len(values) - 1 - years)
+    start, end = values[start_index], values[-1]
+    return start, end, end - start, len(values) - 1 - start_index
+
+
+def _fundamental_coverage(factors):
+    """Tỷ lệ chỉ tiêu cơ bản có dữ liệu để chấm (không tính điểm nền)."""
+    items = [f for f in factors if f.get("label") != BASE_FACTOR[0]]
+    if not items:
+        return None
+    applied = [f for f in items if f.get("points") is not None]
+    return {
+        "applied": len(applied),
+        "total": len(items),
+        "ratio": len(applied) / len(items),
+        "percent": round(len(applied) / len(items) * 100),
+        "missing": [f["label"] for f in items if f.get("points") is None],
+    }
+
+
 def _linear_pts(value, full_at, cap):
     """Điểm tuyến tính có chặn: value = full_at thì được đủ cap điểm, âm thì trừ tương ứng."""
     return int(round(max(-cap, min(cap, value / full_at * cap))))
@@ -452,6 +535,23 @@ def _bank_factors(f):
                           pts, text, core=True))
     else:
         fs.append(_factor("Biên lãi thuần (NIM)", "Chưa có dữ liệu", "Không được tính."))
+
+    # BỔ SUNG: xu hướng NIM nhiều năm (NIM ở mức trung bình nhưng giảm liên tục vẫn là tín hiệu xấu)
+    nim_change = _series_change(_ratio_history(f, "historical_NIM"))
+    if nim_change:
+        start, end, diff, n = nim_change
+        if diff <= -NIM_TREND_DROP:
+            pts, text = -5, f"NIM giảm từ {start:.2%} xuống {end:.2%} trong {n} năm: biên lãi thuần bị thu hẹp"
+        elif diff >= NIM_TREND_RISE:
+            pts, text = 5, f"NIM cải thiện từ {start:.2%} lên {end:.2%} trong {n} năm"
+        else:
+            pts, text = 0, None
+        fs.append(_factor(f"Xu hướng NIM {n} năm", f"{start:.2%} → {end:.2%}",
+                          f"Giảm từ {NIM_TREND_DROP * 10000:.0f} điểm cơ bản: -5; tăng từ "
+                          f"{NIM_TREND_RISE * 10000:.0f} điểm cơ bản: +5.",
+                          pts, text, core=True))
+    else:
+        fs.append(_factor("Xu hướng NIM", "Chưa đủ dữ liệu nhiều năm", "Không được tính."))
 
     if _ok(npl):
         if npl < BANK_NPL_GOOD:
@@ -505,6 +605,25 @@ def _fundamental_factors(f):
     else:
         fs.append(_factor("ROE", "Chưa có dữ liệu", "Không được tính."))
 
+    # 1b. BỔ SUNG: xu hướng ROE nhiều năm (ROE cao nhưng giảm liên tục vẫn là tín hiệu xấu)
+    roe_change = _series_change(_ratio_history(f, "historical_ROE"))
+    if roe_change:
+        start, end, diff, n = roe_change
+        if diff <= -ROE_TREND_BIG_DROP:
+            pts, text = -10, f"ROE giảm từ {start:.1%} xuống {end:.1%} trong {n} năm: hiệu quả sinh lời suy giảm rõ"
+        elif diff <= -ROE_TREND_DROP:
+            pts, text = -5, f"ROE giảm từ {start:.1%} xuống {end:.1%} trong {n} năm"
+        elif diff >= ROE_TREND_RISE:
+            pts, text = 5, f"ROE cải thiện từ {start:.1%} lên {end:.1%} trong {n} năm"
+        else:
+            pts, text = 0, None
+        fs.append(_factor(f"Xu hướng ROE {n} năm", f"{start:.1%} → {end:.1%}",
+                          f"Giảm từ {ROE_TREND_BIG_DROP * 100:.0f} điểm %: -10; giảm từ {ROE_TREND_DROP * 100:.0f} "
+                          f"điểm %: -5; tăng từ {ROE_TREND_RISE * 100:.0f} điểm %: +5.",
+                          pts, text, core=True))
+    else:
+        fs.append(_factor("Xu hướng ROE", "Chưa đủ dữ liệu nhiều năm", "Không được tính."))
+
     # 2. Tăng trưởng lợi nhuận.
     # Dùng LNST thay EPS khi là ngân hàng hoặc khi số cổ phiếu thay đổi (EPS bị pha loãng),
     # vì EPS nhà cung cấp chưa điều chỉnh theo số cổ phiếu hiện tại.
@@ -556,7 +675,6 @@ def _fundamental_factors(f):
     else:
         fs.append(_factor("Cấu trúc Nợ/VCSH", "Chưa có dữ liệu", "Không được tính."))
     return fs
-
 
 
 def score_technical(t):
@@ -686,7 +804,7 @@ def _share_adjusted_inputs(fund, close):
     }
 
 
-def compute_target_price(tech, fund):
+def _compute_pe_target_price(tech, fund):
     history = _valid_historical_pe(fund)
     median_pe = statistics.median(history) if history else None
     pb_history = _valid_positive_history(fund, "historical_PB", "PB")
@@ -878,7 +996,7 @@ def compute_target_price(tech, fund):
         "target_price_range": valuation_range,
         "upside_range": upside_range,
         "method": (
-            f"{eps_basis.capitalize()} {normalized_eps:,.0f} đ × P/E trung vị "
+            f"{eps_basis[:1].upper() + eps_basis[1:]} {normalized_eps:,.0f} đ × P/E trung vị "
             f"{median_pe:.2f} lần; dải Q1–Q3 P/E {pe_low:.2f}–{pe_high:.2f} lần"
         ),
         "confidence": confidence,
@@ -911,6 +1029,144 @@ def compute_target_price(tech, fund):
         "valuation_shares_changed": bool(adjusted and adjusted["shares_changed"]),
     }
 
+
+
+# ----- BỔ SUNG ĐỢT 3: định giá ngân hàng theo P/B–ROE và kiểm tra đồng thuận giữa các phương pháp -----
+def _round_price(value):
+    """Làm tròn giá (nghìn đồng) đến 2 chữ số để mọi nơi hiển thị cùng một con số."""
+    return None if value is None else round(value, 2)
+
+
+def _bank_pb_roe_valuation(result, tech, fund):
+    """Ngân hàng: P/B hợp lý = (ROE - g) / (COE - g) là phương pháp chính; P/E lịch sử chuyển sang đối chiếu.
+
+    COE và g là GIẢ ĐỊNH của nhóm (BANK_COE, BANK_COE_STEP, BANK_LONG_GROWTH); dải giá dùng COE ± 1 điểm %.
+    Thiếu ROE/BVPS, ROE không vượt g, hoặc số cổ phiếu mâu thuẫn với vốn hóa thì giữ nguyên kết quả P/E.
+    """
+    fund = fund or {}
+    close = (tech or {}).get("close")
+    try:
+        roe = float(fund.get("ROE"))
+    except (TypeError, ValueError):
+        roe = None
+    adjusted = _share_adjusted_inputs(fund, close)
+    shares_conflict = bool(
+        adjusted and adjusted["market_cap_gap"] is not None
+        and adjusted["market_cap_gap"] > SHARE_TOLERANCE
+    )
+    bvps = adjusted["bvps"] if adjusted and adjusted["bvps"] else None
+    if bvps is None:
+        try:
+            bvps = float(fund.get("BVPS"))
+        except (TypeError, ValueError):
+            bvps = None
+    g = BANK_LONG_GROWTH
+    coe_low, coe_mid, coe_high = BANK_COE - BANK_COE_STEP, BANK_COE, BANK_COE + BANK_COE_STEP
+    if (shares_conflict or not _ok(close, roe, bvps) or close <= 0 or bvps <= 0
+            or roe <= g or coe_low <= g):
+        note = (
+            "Chưa áp dụng được P/B theo ROE cho ngân hàng (thiếu ROE/BVPS, ROE không vượt tăng trưởng "
+            "dài hạn hoặc số cổ phiếu không nhất quán); tạm dùng P/E lịch sử."
+        )
+        result["valuation_warning"] = " ".join(x for x in (result.get("valuation_warning"), note) if x)
+        if result.get("target_price") is not None:
+            result["confidence"] = "Thấp"
+        return result
+
+    def fair_price(coe):
+        return (roe - g) / (coe - g) * bvps / 1000   # nghìn đồng
+
+    pb_mid = (roe - g) / (coe_mid - g)
+    low, mid, high = fair_price(coe_high), fair_price(coe_mid), fair_price(coe_low)
+    target_range = (_round_price(low), _round_price(high))
+    for item in result.get("valuation_methods", []):
+        if item.get("role") == "Phương pháp chính":
+            item["role"] = "Đối chiếu"
+    result["valuation_methods"] = [{
+        "method_name": "P/B theo ROE (ngân hàng)",
+        "value": mid,
+        "low": low,
+        "high": high,
+        "role": "Phương pháp chính",
+        "note": (
+            f"P/B hợp lý = (ROE {roe:.1%} − g {g:.0%}) / (COE − g); COE {coe_low:.0%}–{coe_high:.0%} "
+            f"là giả định của nhóm; BVPS {bvps:,.0f} đ theo số cổ phiếu hiện tại."
+        ),
+    }] + list(result.get("valuation_methods", []))
+    result.update({
+        "target_price": mid,
+        "upside": round(mid / close - 1, 4),
+        "target_price_range": target_range,
+        "upside_range": (round(target_range[0] / close - 1, 4), round(target_range[1] / close - 1, 4)),
+        "method": (
+            f"P/B hợp lý = (ROE {roe:.1%} − g {g:.0%}) / (COE {coe_mid:.0%} − g) = {pb_mid:.2f} lần "
+            f"× BVPS {bvps:,.0f} đ; dải giá dùng COE {coe_low:.0%}–{coe_high:.0%}"
+        ),
+        "confidence": "Trung bình",
+        "valuation_label": "P/B theo ROE",
+        "valuation_bvps": bvps,
+        "valuation_bank_assumptions": {
+            "roe": roe, "coe": coe_mid, "coe_step": BANK_COE_STEP, "growth": g, "fair_pb": pb_mid,
+        },
+        "valuation_summary": (
+            "Ngân hàng được định giá chính bằng P/B hợp lý theo ROE vì giá trị ngân hàng gắn với vốn chủ sở hữu "
+            "và khả năng sinh lời trên vốn; P/E lịch sử và P/B lịch sử chỉ dùng đối chiếu. "
+            f"COE {coe_low:.0%}–{coe_high:.0%} và g {g:.0%} là giả định của nhóm, kết quả nhạy với hai giả định này. "
+            + (result.get("valuation_summary") or "")
+        ).strip(),
+    })
+    return result
+
+
+def _apply_valuation_consensus(result, tech):
+    """So phương pháp chính với phương pháp đối chiếu; trái dấu upside hoặc lệch quá
+    METHOD_DIVERGENCE_LIMIT thì đánh dấu không đồng thuận và hạ độ tin cậy."""
+    close = (tech or {}).get("close")
+    primary = result.get("target_price")
+    bank_primary = result.get("valuation_label") == "P/B theo ROE"
+    cross = result.get("valuation_pe_target") if bank_primary else result.get("valuation_pb_target")
+    cross_name = "P/E lịch sử" if bank_primary else "P/B lịch sử × BVPS"
+    if not _ok(close, primary, cross) or close <= 0 or primary <= 0 or cross <= 0:
+        result["valuation_consensus"] = None
+        return result
+    gap = cross / primary - 1
+    upside_primary, upside_cross = primary / close - 1, cross / close - 1
+    consensus = abs(gap) <= METHOD_DIVERGENCE_LIMIT and upside_primary * upside_cross >= 0
+    result["valuation_consensus"] = consensus
+    result["valuation_cross_check"] = {
+        "name": cross_name, "value": cross, "upside": round(upside_cross, 4), "gap": round(gap, 4),
+    }
+    if not consensus:
+        note = (
+            f"Phương pháp chính ({result.get('valuation_label', 'P/E')}) cho giá giữa dải "
+            f"{_price_vnd(primary)} (upside {upside_primary:+.1%}), còn {cross_name} cho "
+            f"{_price_vnd(cross)} (upside {upside_cross:+.1%}), lệch {gap:+.0%}. Các phương pháp không "
+            "đồng thuận nên chưa thể kết luận cổ phiếu đắt hay rẻ."
+        )
+        if "hai phương pháp đang cho tín hiệu khác nhau" not in (result.get("valuation_warning") or ""):
+            result["valuation_warning"] = " ".join(x for x in (result.get("valuation_warning"), note) if x)
+        result["confidence"] = "Thấp"
+    return result
+
+
+def compute_target_price(tech, fund):
+    """Định giá tổng hợp: doanh nghiệp thường dùng P/E lịch sử; ngân hàng dùng P/B theo ROE làm
+    phương pháp chính. Sau đó luôn đối chiếu với một phương pháp khác để kiểm tra đồng thuận."""
+    result = _compute_pe_target_price(tech, fund)
+    result["valuation_label"] = "P/E"
+    result["valuation_pe_target"] = result.get("target_price")
+    result["valuation_pe_range"] = result.get("target_price_range")
+    result["valuation_pe_upside_range"] = result.get("upside_range")
+    if (fund or {}).get("valuation_type") == "bank":
+        result = _bank_pb_roe_valuation(result, tech, fund)
+    result = _apply_valuation_consensus(result, tech)
+    # Làm tròn giống dải giá chính để bảng phương pháp và ô tiêu đề hiện cùng một con số
+    result["valuation_pb_target"] = _round_price(result.get("valuation_pb_target"))
+    for item in result.get("valuation_methods", []):
+        for key in ("low", "high", "value"):
+            if item.get(key) is not None:
+                item[key] = _round_price(item[key])
+    return result
 
 
 # ======================= 5. KHUYẾN NGHỊ =======================
@@ -986,11 +1242,34 @@ def get_recommendation(tech, fund, news=None, use_ai=True):
         reasons += r; risks += k
 
     tp = compute_target_price(tech, fund)
+    valuation_label = tp.get("valuation_label") or "P/E"
     rec, decision_note = (
         ("GIỮ", "Chưa đủ dữ liệu ở cả phân tích cơ bản và kỹ thuật để tính điểm tổng 50/50.")
         if total is None
         else _decide(total, tp["upside"], tp.get("upside_range"))
     )
+    decision_note = decision_note.replace("upside P/E", f"upside {valuation_label}")
+    # BỔ SUNG: các phương pháp định giá trái chiều thì không phát tín hiệu MUA/BÁN
+    if tp.get("valuation_consensus") is False:
+        if rec in ("MUA", "BÁN"):
+            decision_note = (
+                f"Hạ từ {rec} xuống GIỮ vì các phương pháp định giá không đồng thuận. " + decision_note
+            )
+            rec = "GIỮ"
+        else:
+            decision_note += " Các phương pháp định giá cũng đang cho kết quả trái chiều."
+        risks.append("Các phương pháp định giá cho kết quả trái chiều; chưa thể kết luận cổ phiếu đắt hay rẻ.")
+    elif tp.get("upside_range") and tp["upside_range"][1] < 0:
+        risks.append(
+            f"Định giá theo {valuation_label} cho upside âm trên toàn dải "
+            f"({tp['upside_range'][0]:+.1%} đến {tp['upside_range'][1]:+.1%})."
+        )
+    coverage = _fundamental_coverage(factor_groups["fundamental"])
+    if coverage and coverage["ratio"] < MIN_FUNDAMENTAL_COVERAGE:
+        risks.append(
+            f"Điểm cơ bản chỉ dựa trên {coverage['applied']}/{coverage['total']} chỉ tiêu có dữ liệu "
+            f"(thiếu: {', '.join(coverage['missing'])}); kết luận cơ bản bị giới hạn."
+        )
     result = {
         "symbol": tech.get("symbol") or fund.get("symbol"), "recommendation": rec,
         "decision_note": decision_note, "decision_rule": _decision_rule_text(),
@@ -1015,7 +1294,23 @@ def get_recommendation(tech, fund, news=None, use_ai=True):
         "reasons": reasons, "risks": risks,
         "ai_summary": "", "ai_generated": False,
     }
+    result.update({   # BỔ SUNG ĐỢT 3
+        "valuation_label": valuation_label,
+        "valuation_consensus": tp.get("valuation_consensus"),
+        "valuation_cross_check": tp.get("valuation_cross_check"),
+        "valuation_pe_target": tp.get("valuation_pe_target"),
+        "valuation_pe_range": tp.get("valuation_pe_range"),
+        "valuation_pe_upside_range": tp.get("valuation_pe_upside_range"),
+        "valuation_bvps": tp.get("valuation_bvps"),
+        "valuation_bank_assumptions": tp.get("valuation_bank_assumptions"),
+        "valuation_shares_adjusted": tp.get("valuation_shares_adjusted", False),
+        "valuation_shares_changed": tp.get("valuation_shares_changed", False),
+        "fundamental_coverage": coverage["percent"] if coverage else None,
+        "fundamental_missing": coverage["missing"] if coverage else [],
+    })
     result["score_breakdown"] = _score_breakdown(factor_groups, scores, total, rec, result["decision_rule"], decision_note, weights)
+    result["score_breakdown"]["fundamental_coverage"] = result["fundamental_coverage"]
+    result["score_breakdown"]["fundamental_missing"] = result["fundamental_missing"]
 
     facts = build_facts(tech, fund, result)
     if use_ai:
@@ -1031,20 +1326,67 @@ def get_recommendation(tech, fund, news=None, use_ai=True):
 
 
 # ======================= 6. AI: NHẬN ĐỊNH CHUYÊN BIỆT CHO TỪNG TAB & TỔNG QUAN =======================
+def _trend_summary(fund):
+    """Mô tả xu hướng ROE/NIM nhiều năm bằng chữ để AI không tự suy diễn 'ổn định'."""
+    parts = []
+    for key, name, fmt in (("historical_ROE", "ROE", "{:.1%}"), ("historical_NIM", "NIM", "{:.2%}")):
+        change = _series_change(_ratio_history(fund, key))
+        if not change:
+            continue
+        start, end, diff, n = change
+        if diff < 0:
+            parts.append(f"{name} giảm từ {fmt.format(start)} xuống {fmt.format(end)} trong {n} năm")
+        elif diff > 0:
+            parts.append(f"{name} tăng từ {fmt.format(start)} lên {fmt.format(end)} trong {n} năm")
+        else:
+            parts.append(f"{name} đi ngang quanh {fmt.format(end)} trong {n} năm")
+    return "; ".join(parts) or "chưa đủ dữ liệu nhiều năm"
+
+
+def _pillar_consensus(scores):
+    technical, fundamental = (scores or {}).get("technical"), (scores or {}).get("fundamental")
+    if technical is None or fundamental is None:
+        return "chưa đủ dữ liệu cả hai trụ cột"
+    if technical >= 50 and fundamental >= 50:
+        return "đồng thuận tích cực (cả hai trụ cột từ 50 trở lên)"
+    if technical < 50 and fundamental < 50:
+        return "đồng thuận tiêu cực (cả hai trụ cột dưới 50)"
+    return "trái chiều (một trụ cột trên 50, một trụ cột dưới 50)"
+
+
+def _valuation_consensus_text(result):
+    consensus = (result or {}).get("valuation_consensus")
+    cross = (result or {}).get("valuation_cross_check") or {}
+    if consensus is None:
+        return "chưa đủ dữ liệu để đối chiếu hai phương pháp"
+    if consensus:
+        return f"đồng thuận với {cross.get('name', 'phương pháp đối chiếu')}"
+    return (f"KHÔNG đồng thuận với {cross.get('name', 'phương pháp đối chiếu')} "
+            f"(upside đối chiếu {_p(cross.get('upside'))}); chưa thể kết luận đắt hay rẻ")
+
+
+def _coverage_text(result):
+    percent = (result or {}).get("fundamental_coverage")
+    if percent is None:
+        return "chưa xác định"
+    missing = (result or {}).get("fundamental_missing") or []
+    return f"{percent}% chỉ tiêu có dữ liệu" + (f" (thiếu: {', '.join(missing)})" if missing else "")
+
+
 def build_facts(tech, fund, result):
     tech = tech or {}
     fund = fund or {}
     result = result or {}
-    
+
     # Lấy mã cổ phiếu an toàn từ nhiều nguồn dự phòng
     symbol = (
-        result.get("symbol") or 
-        result.get("ticker") or 
-        tech.get("symbol") or 
-        fund.get("symbol") or 
+        result.get("symbol") or
+        result.get("ticker") or
+        tech.get("symbol") or
+        fund.get("symbol") or
         "N/A"
     )
-    
+
     rec = result.get("recommendation", "N/A")
     score = result.get("total_score")
     score_text = f"{score}/100" if score is not None else "Chưa đủ dữ liệu để tính điểm tổng 50/50"
@@ -1053,6 +1395,7 @@ def build_facts(tech, fund, result):
     target_p = result.get("target_price", "N/A")
     upside_val = result.get("upside", "N/A")
     target_m = result.get("target_method", "N/A")
+    label = result.get("valuation_label") or "P/E"
     score_breakdown = result.get("score_breakdown") or {}
     technical_observations = [
         factor["text"]
@@ -1081,13 +1424,17 @@ def build_facts(tech, fund, result):
     return f"""Mã cổ phiếu: {symbol}
 Khuyến nghị hệ thống: {rec} (Tổng điểm: {score_text})
 Trọng số điểm tổng: 50% cơ bản + 50% kỹ thuật; tin tức không tham gia chấm điểm.
+Quan hệ hai trụ cột: {_pillar_consensus(scores_dict)}.
 Lý do: {note}
 Điểm thành phần: {scores_dict}
 Số liệu cơ bản: {fundamental_facts}
-Giá giữa dải P/E: {target_p} nghìn đồng (Upside trung vị: {upside_val})
-Dải giá P/E Q1–Q3: {result.get('target_price_range', 'N/A')}; dải upside: {result.get('upside_range', 'N/A')}
-Giá đối chiếu P/B: {result.get('valuation_pb_target', 'N/A')} nghìn đồng
-Phương pháp định giá: {target_m}
+Xu hướng nhiều năm (đã tính sẵn): {_trend_summary(fund)}.
+Độ phủ dữ liệu cơ bản: {_coverage_text(result)}.
+Phương pháp định giá chính: {label}; giá giữa dải {target_p} nghìn đồng (upside {upside_val})
+Dải giá {label}: {result.get('target_price_range', 'N/A')}; dải upside: {result.get('upside_range', 'N/A')}
+Đối chiếu định giá: {_valuation_consensus_text(result)}.
+Giá đối chiếu P/B lịch sử: {result.get('valuation_pb_target', 'N/A')} nghìn đồng
+Cách tính: {target_m}
 Yếu tố cơ bản hỗ trợ: {", ".join(fundamental_strengths) or "chưa có yếu tố được xác nhận"}
 Yếu tố cơ bản hạn chế: {", ".join(fundamental_constraints) or "chưa có yếu tố bị trừ điểm"}
 Tín hiệu kỹ thuật đáng chú ý: {"; ".join(technical_observations) or "chưa đủ dữ liệu chỉ báo"}"""
@@ -1127,6 +1474,8 @@ Biên lợi nhuận gộp: {_p(fund.get('gross_margin'))}; biên lợi nhuận r
 Nợ vay/VCSH: {_f(fund.get('debt_to_equity'), 2)} lần; thanh toán hiện hành: {_f(fund.get('current_ratio'), 2)} lần.
 Dòng tiền kinh doanh: {_f(fund.get('operating_cash_flow'), 1, ' tỷ đồng')}.
 {bank_metrics}
+Xu hướng nhiều năm (đã tính sẵn): {_trend_summary(fund)}.
+Độ phủ dữ liệu cơ bản: {_coverage_text(result)}.
 Yếu tố ảnh hưởng đến điểm cơ bản: {contribution_summary}"""
 
 
@@ -1146,25 +1495,28 @@ def build_valuation_facts(tech, fund, result):
     history_count = result.get("valuation_history_count")
     if history_count is None:
         history_count = len(historical_pe_values)
-    target_range = result.get("target_price_range")
+    label = result.get("valuation_label") or "P/E"
+    pe_range = result.get("valuation_pe_range") or (result.get("target_price_range") if label == "P/E" else None)
+    pe_upside = result.get("valuation_pe_upside_range") or (result.get("upside_range") if label == "P/E" else None)
     range_text = (
-        f"{_f(target_range[0], 2)}–{_f(target_range[1], 2)} nghìn đồng/cổ phiếu"
-        if target_range
+        f"{_f(pe_range[0], 2)}–{_f(pe_range[1], 2)} nghìn đồng/cổ phiếu"
+        if pe_range
         else "chưa đủ dữ liệu"
     )
-    upside_range = result.get("upside_range")
     upside_range_text = (
-        f"{_p(upside_range[0])} đến {_p(upside_range[1])}"
-        if upside_range
+        f"{_p(pe_upside[0])} đến {_p(pe_upside[1])}"
+        if pe_upside
         else "chưa đủ dữ liệu"
     )
+    primary_range = result.get("target_price_range")
+    primary_upside = result.get("upside_range")
     normalized_eps = result.get("valuation_eps")
     normalized_eps_count = result.get("valuation_eps_count", 0)
     eps_basis = result.get("valuation_eps_basis", "chưa đủ dữ liệu")
     pb_reference = result.get("valuation_pb_reference")
     pb_count = result.get("valuation_pb_count", 0)
     pb_target = result.get("valuation_pb_target")
-    bvps = fund.get("BVPS")
+    bvps = result.get("valuation_bvps") or fund.get("BVPS")
     eps_formula = (
         "trung vị EPS dương nhiều năm"
         if result.get("valuation_eps_normalized")
@@ -1174,8 +1526,8 @@ def build_valuation_facts(tech, fund, result):
     valuation_type = fund.get("valuation_type", "non-bank")
     if valuation_type == "bank":
         sector_note = (
-            "Doanh nghiệp thuộc nhóm ngân hàng; mô hình hiện tại vẫn dùng P/E lịch sử, "
-            "nên cần đối chiếu thêm P/B và ROE trước khi kết luận."
+            "Doanh nghiệp thuộc nhóm ngân hàng; phương pháp chính là P/B hợp lý theo ROE, cần đọc cùng "
+            "P/B và ROE; COE và g là giả định của nhóm. P/E lịch sử chỉ dùng đối chiếu."
         )
     elif valuation_type == "cyclical":
         sector_note = (
@@ -1189,16 +1541,25 @@ def build_valuation_facts(tech, fund, result):
             "giá trị đất và dự án có thể chưa được phản ánh đầy đủ."
         )
 
+    primary_line = ""
+    if label != "P/E" and primary_range:
+        primary_line = (
+            f"\nPhương pháp chính {label}: dải giá {_f(primary_range[0], 2)}–{_f(primary_range[1], 2)} "
+            f"nghìn đồng/cổ phiếu; upside toàn dải {_p(primary_upside[0])} đến {_p(primary_upside[1])}; "
+            f"cách tính: {result.get('target_method', 'N/A')}."
+        )
+
     return f"""Mã cổ phiếu: {tech.get('symbol') or fund.get('symbol', 'N/A')}
 Giá hiện tại: {_f(current_price, 2)} nghìn đồng/cổ phiếu.
 EPS gần nhất: {_f(eps, 0)} đồng/cổ phiếu.
 P/E hiện tại: {_f(current_pe, 2)} lần.
 P/E trung vị lịch sử: {_f(historical_pe, 2)} lần, từ {history_count} kỳ hợp lệ.
-EPS dùng để định giá: {_f(normalized_eps, 0)} đồng/cổ phiếu ({eps_basis}; {normalized_eps_count} năm EPS dương được tìm thấy).
+EPS dùng để định giá: {_f(normalized_eps, 0)} đồng/cổ phiếu ({eps_basis}; {normalized_eps_count} năm EPS dương được tìm thấy).{primary_line}
 Dải giá tham khảo P/E Q1–Q3: {range_text}; upside toàn dải: {upside_range_text}.
-Giá giữa dải theo P/E trung vị: {_f(result.get('target_price'), 2)} nghìn đồng/cổ phiếu.
-P/B trung vị lịch sử: {_f(pb_reference, 2)} lần từ {pb_count} kỳ; BVPS gần nhất: {_f(bvps, 0)} đồng/cổ phiếu; giá P/B đối chiếu: {_f(pb_target, 2)} nghìn đồng/cổ phiếu.
-Cách tính: {eps_formula} × Q1–Q3 P/E lịch sử hợp lệ. P/B × BVPS chỉ là phép đối chiếu riêng, không gộp trọng số với P/E.
+Giá giữa dải theo phương pháp chính ({label}): {_f(result.get('target_price'), 2)} nghìn đồng/cổ phiếu.
+P/B trung vị lịch sử: {_f(pb_reference, 2)} lần từ {pb_count} kỳ; BVPS dùng để định giá: {_f(bvps, 0)} đồng/cổ phiếu; giá P/B đối chiếu: {_f(pb_target, 2)} nghìn đồng/cổ phiếu.
+Mức đồng thuận giữa các phương pháp: {_valuation_consensus_text(result)}.
+Cách tính P/E: {eps_formula} × Q1–Q3 P/E lịch sử hợp lệ. Các phương pháp đối chiếu được trình bày riêng, không gộp trọng số.
 Giới hạn theo loại hình: {sector_note}
 Ghi chú: {result.get('valuation_summary', 'Giá mục tiêu ước tính chỉ là kết quả theo giả định, không đảm bảo thị trường hội tụ về mức giá này.')}"""
 
@@ -1241,6 +1602,17 @@ Vùng tham chiếu kỹ thuật 60 phiên: hỗ trợ ước lượng {_f(tech.g
 Chi tiết nhóm/chỉ báo: {factor_summary or 'Chưa đủ dữ liệu để tính.'}"""
 
 
+AI_GUARDRAILS = """
+
+QUY TẮC CHUNG (bắt buộc cho mọi phần):
+- Không chào hỏi, không xưng "tôi", không giới thiệu vai trò; đi thẳng vào nhận định.
+- Không nêu nguyên nhân (cạnh tranh, vĩ mô, lãi suất, chính sách, dòng tiền tổ chức...) nếu dữ liệu đầu vào không nêu nguyên nhân đó.
+- Nếu dữ liệu ghi ROE hoặc NIM giảm qua nhiều năm, không được mô tả là "ổn định", "vững vàng", "bền vững" hay "nền tảng tốt".
+- Nếu dữ liệu ghi các phương pháp định giá KHÔNG đồng thuận, phải nói rõ chưa thể kết luận đắt hay rẻ; không chọn một phương pháp để kết luận.
+- Dùng đúng nhãn "Quan hệ hai trụ cột" trong dữ liệu: chỉ gọi là giằng co/trái chiều khi dữ liệu ghi trái chiều.
+- Nếu độ phủ dữ liệu cơ bản dưới 70%, nói rõ kết luận cơ bản bị giới hạn vì thiếu dữ liệu."""
+
+
 def build_prompt(facts):
     return f"""Bạn là chuyên viên phân tích tài chính. Hãy đưa ra nhận định tổng quan có tính phân tích, không phải bản đọc lại dữ liệu.
 
@@ -1255,7 +1627,7 @@ QUY TẮC BẮT BUỘC:
 - Không chép lại bảng số liệu, không kể lần lượt từng chỉ tiêu, không nhắc lại công thức chấm điểm hay điểm cộng/trừ của từng chỉ tiêu.
 - Tối đa 2 con số trong toàn bài; ưu tiên điểm tổng hoặc kết quả định giá khi thật sự cần. Phần còn lại phải phân tích ý nghĩa và mối liên hệ.
 - Không nêu chỉ tiêu không áp dụng, dữ liệu N/A hoặc số liệu không có trong đầu vào.
-- Phân biệt dữ kiện, suy luận và điều chưa thể kết luận; không bịa nguyên nhân, không hứa hẹn lợi nhuận."""
+- Phân biệt dữ kiện, suy luận và điều chưa thể kết luận; không bịa nguyên nhân, không hứa hẹn lợi nhuận.{AI_GUARDRAILS}"""
 
 
 def build_tab_prompt(tab_type, facts):
@@ -1268,23 +1640,22 @@ Hãy trình bày đúng 4 gạch đầu dòng ngắn bằng tiếng Việt:
 - Động lượng RSI và MACD.
 - Diễn biến giá, khối lượng và breakout.
 - Vùng hỗ trợ/kháng cự tham chiếu cùng rủi ro chính.
-Mỗi gạch đầu dòng tối đa 2 câu. Nêu cả tín hiệu thuận và rủi ro; phân biệt dữ liệu thiếu với tín hiệu trung tính. Chỉ dùng số liệu đã cho, không suy diễn dòng tiền tổ chức, không khẳng định chắc chắn xu hướng tương lai hay đưa ra khuyến nghị mua/bán. Vùng 60 phiên chỉ là tham chiếu đơn giản, không phải vùng hỗ trợ/kháng cự đã được xác nhận."""
+Mỗi gạch đầu dòng tối đa 2 câu. Nêu cả tín hiệu thuận và rủi ro; phân biệt dữ liệu thiếu với tín hiệu trung tính. Chỉ dùng số liệu đã cho, không suy diễn dòng tiền tổ chức, không khẳng định chắc chắn xu hướng tương lai hay đưa ra khuyến nghị mua/bán. Vùng 60 phiên chỉ là tham chiếu đơn giản, không phải vùng hỗ trợ/kháng cự đã được xác nhận.{AI_GUARDRAILS}"""
     elif tab_type == "fundamental":
         return f"""Bạn là chuyên gia phân tích cơ bản cổ phiếu. Dựa trên dữ liệu sau:
 {facts}
-Viết 4-5 câu tiếng Việt, ngắn gọn nhưng có lập luận. Không đọc lại bảng số và không lần lượt nhắc ROE, ROA, EPS, doanh thu, nợ, thanh khoản, dòng tiền. Hãy tổng hợp chúng để trả lời: doanh nghiệp đang sinh lời/tăng trưởng ra sao; chất lượng tăng trưởng có đi cùng sức khỏe tài chính hay không; điểm mạnh nào có ý nghĩa nhất và điểm yếu/dữ liệu thiếu nào hạn chế kết luận. Có thể dẫn tối đa 2 con số toàn bài, chỉ khi cần làm bằng chứng cho kết luận. Không lặp điểm cộng/trừ hoặc công thức chấm điểm. Chỉ phân tích NIM, NPL, bao phủ nợ xấu và CAR nếu đầu vào có dữ liệu ngân hàng; bỏ qua nếu không áp dụng. Không suy đoán nguyên nhân hoặc tính bền vững vượt quá dữ kiện. Phần định giá P/E, P/B thuộc tab Định giá nên không đánh giá ở đây."""
+Viết 4-5 câu tiếng Việt, ngắn gọn nhưng có lập luận. Không đọc lại bảng số và không lần lượt nhắc ROE, ROA, EPS, doanh thu, nợ, thanh khoản, dòng tiền. Hãy tổng hợp chúng để trả lời: doanh nghiệp đang sinh lời/tăng trưởng ra sao và xu hướng nhiều năm đang cải thiện hay suy giảm; chất lượng tăng trưởng có đi cùng sức khỏe tài chính hay không; điểm mạnh nào có ý nghĩa nhất và điểm yếu/dữ liệu thiếu nào hạn chế kết luận. Có thể dẫn tối đa 2 con số toàn bài, chỉ khi cần làm bằng chứng cho kết luận. Không lặp điểm cộng/trừ hoặc công thức chấm điểm. Chỉ phân tích NIM, NPL, bao phủ nợ xấu và CAR nếu đầu vào có dữ liệu ngân hàng; bỏ qua nếu không áp dụng. Với ngân hàng, không dùng dòng tiền kinh doanh làm bằng chứng sức khỏe tài chính. Không suy đoán nguyên nhân hoặc tính bền vững vượt quá dữ kiện. Phần định giá P/E, P/B thuộc tab Định giá nên không đánh giá ở đây.{AI_GUARDRAILS}"""
     elif tab_type == "valuation":
         return f"""Bạn là chuyên gia định giá cổ phiếu. Dựa trên dữ liệu sau:
 {facts}
 Hãy viết nhận xét diễn giải bằng tiếng Việt, gồm 4 gạch đầu dòng ngắn:
+- Phương pháp chính và dải giá của nó cho biết điều gì; nhấn mạnh đây không phải biên an toàn chắc chắn.
 - So sánh P/E hiện tại với trung vị lịch sử nếu có đủ dữ liệu; giải thích điều đó có thể hàm ý gì.
-- Dải giá tham khảo P/E Q1–Q3 và upside toàn dải cho biết điều gì; nhấn mạnh đây không phải biên an toàn chắc chắn.
-- Đánh giá giả định dùng trung vị EPS dương nhiều năm; giải thích rủi ro khi lợi nhuận biến động hoặc khác chu kỳ.
-- Nêu giá đối chiếu P/B × BVPS riêng, không gộp với P/E; nhắc giới hạn dữ liệu/loại hình doanh nghiệp.
-Mỗi ý chỉ trình bày một lần, không lặp lại cùng một cảnh báo ở nhiều gạch đầu dòng. Không chỉ nhắc lại số liệu: hãy giải thích ý nghĩa, nêu cả khả năng tích cực lẫn rủi ro, không tự tạo số liệu hoặc so sánh peer, không khẳng định cổ phiếu rẻ/đắt chắc chắn và không đưa khuyến nghị mua/bán. Nếu EPS hoặc P/E chưa đủ lịch sử tối thiểu, hãy nêu số kỳ quan sát và nói rõ hạn chế. P/B là đối chiếu độc lập, không phải giá mục tiêu đã được gộp với P/E. Nếu không có số liệu, hãy nói rõ chưa đủ cơ sở kết luận."""
+- Đánh giá giả định quan trọng nhất của mô hình (EPS chuẩn hóa với P/E; ROE, COE và g với P/B theo ROE ở ngân hàng) và rủi ro khi giả định sai.
+- Mức đồng thuận giữa phương pháp chính và phương pháp đối chiếu; nếu không đồng thuận thì nói rõ chưa thể kết luận đắt hay rẻ.
+Mỗi ý chỉ trình bày một lần, không lặp lại cùng một cảnh báo ở nhiều gạch đầu dòng. Không chỉ nhắc lại số liệu: hãy giải thích ý nghĩa, nêu cả khả năng tích cực lẫn rủi ro, không tự tạo số liệu hoặc so sánh peer, không khẳng định cổ phiếu rẻ/đắt chắc chắn và không đưa khuyến nghị mua/bán. Nếu EPS hoặc P/E chưa đủ lịch sử tối thiểu, hãy nêu số kỳ quan sát và nói rõ hạn chế. Các phương pháp đối chiếu là độc lập, không gộp trọng số với phương pháp chính. Nếu không có số liệu, hãy nói rõ chưa đủ cơ sở kết luận.{AI_GUARDRAILS}"""
     else:
         return build_prompt(facts)
-
 
 
 import streamlit as st
@@ -1456,19 +1827,20 @@ def fallback_summary(r):
     total_score = r.get("total_score")
     if total_score is None:
         total_score = r.get("score_breakdown", {}).get("total_score")
-        
+
     rec = r.get("recommendation", "GIỮ")
     note = r.get("decision_note", "")
     target_p = _price_vnd(r.get("target_price"))
-    
+
     upside_val = r.get("upside")
     if isinstance(upside_val, (int, float)):
         upside_p = f"{upside_val * 100:+.1f}%"
     else:
         upside_p = str(upside_val or "N/A")
 
-    reasons = r.get("reasons") or r.get("investment_points") or []
-    risks = r.get("risks") or r.get("key_risks") or []
+    # Bỏ dấu chấm cuối từng ý trước khi nối, tránh lỗi ".;" và ".."
+    reasons = [str(x).rstrip(". ") for x in (r.get("reasons") or r.get("investment_points") or [])]
+    risks = [str(x).rstrip(". ") for x in (r.get("risks") or r.get("key_risks") or [])]
 
     score_text = f"{total_score}/100 điểm định lượng" if total_score is not None else "chưa đủ dữ liệu để tính điểm tổng 50/50"
     p1 = f"Cổ phiếu {symbol} {score_text}, ứng với khuyến nghị {rec}. {note}"
@@ -1477,7 +1849,7 @@ def fallback_summary(r):
         range_upside = r.get("upside_range")
         if price_range:
             p1 += (
-                f" Dải giá tham khảo P/E là "
+                f" Dải giá tham khảo {r.get('valuation_label') or 'P/E'} là "
                 f"{_price_vnd(price_range[0])}–{_price_vnd(price_range[1])} "
                 f"với upside {range_upside[0]:+.1%} đến {range_upside[1]:+.1%}."
             )
@@ -1493,6 +1865,10 @@ def fallback_summary(r):
     p3 = f"Các rủi ro cần lưu ý: {risk_text}."
 
     return "\n\n".join([p1, p2, p3])
+def _round2(value):
+    return round(value, 2) if isinstance(value, (int, float)) else value
+
+
 def to_report_context(rec, tech, fund, company_name="", exchange="", industry=""):
     fund = normalize_fund(fund)
     sc = rec["scores"]
@@ -1500,13 +1876,14 @@ def to_report_context(rec, tech, fund, company_name="", exchange="", industry=""
     score_details = ", ".join(
         f"{labels[k]} {s}/100" if s is not None else f"{labels[k]} chưa đủ dữ liệu"
         for k, s in sc.items())
-    
+
+    valuation_label = rec.get("valuation_label") or "P/E"
     if rec["target_price"] is not None:
-        target_note = (f"Dải giá tham khảo P/E tính theo: {rec['target_method']} "
+        target_note = (f"Dải giá tham khảo {valuation_label} tính theo: {rec['target_method']} "
                        f"(độ tin cậy {rec.get('target_confidence') or 'N/A'}).")
     else:
         target_note = str(rec.get("target_method", "")) + "."
-        
+
     total_score_text = (
         f"{rec['total_score']}/100 điểm"
         if rec.get("total_score") is not None
@@ -1568,11 +1945,34 @@ def to_report_context(rec, tech, fund, company_name="", exchange="", industry=""
         ),
         "target_method": rec.get("target_method", "P/E trung vị lịch sử"),  # KHÓA ĐÃ ĐƯỢC BỔ SUNG
         "target_confidence": rec.get("target_confidence") or "Chưa xác định",
-        "valuation_reference_pe": rec.get("valuation_reference_pe"),
-        "valuation_current_pe": rec.get("valuation_current_pe"),
+        "valuation_reference_pe": _round2(rec.get("valuation_reference_pe")),
+        "valuation_current_pe": _round2(rec.get("valuation_current_pe")),
         "valuation_history_count": rec.get("valuation_history_count", 0),
-        "valuation_pe_low": rec.get("valuation_pe_low"),
-        "valuation_pe_high": rec.get("valuation_pe_high"),
+        "valuation_pe_low": _round2(rec.get("valuation_pe_low")),
+        "valuation_pe_high": _round2(rec.get("valuation_pe_high")),
+        # ----- BỔ SUNG ĐỢT 3: nhãn phương pháp chính, đối chiếu, chuỗi hiển thị đã định dạng -----
+        "valuation_label": valuation_label,
+        "valuation_consensus_display": (
+            "Chưa đủ dữ liệu để đối chiếu" if rec.get("valuation_consensus") is None
+            else "Có" if rec.get("valuation_consensus")
+            else "Không — các phương pháp cho kết quả trái chiều, chưa kết luận đắt/rẻ"
+        ),
+        "valuation_pe_range_display": (
+            f"{_price_vnd(rec['valuation_pe_range'][0])} – {_price_vnd(rec['valuation_pe_range'][1])}"
+            if rec.get("valuation_pe_range") else "Chưa đủ dữ liệu"
+        ),
+        "valuation_pe_upside_display": (
+            f"{rec['valuation_pe_upside_range'][0] * 100:+.1f}% đến {rec['valuation_pe_upside_range'][1] * 100:+.1f}%"
+            if rec.get("valuation_pe_upside_range") else "N/A"
+        ),
+        "valuation_eps_display": (
+            f"{rec['valuation_eps']:,.0f} đ/cp" if rec.get("valuation_eps") is not None else "N/A"
+        ),
+        "valuation_bvps_display": (
+            f"{rec['valuation_bvps']:,.0f} đ/cp" if rec.get("valuation_bvps") is not None else "N/A"
+        ),
+        "valuation_shares_changed": bool(rec.get("valuation_shares_changed")),
+        "fundamental_coverage": rec.get("fundamental_coverage"),
         "valuation_eps": rec.get("valuation_eps"),
         "valuation_eps_count": rec.get("valuation_eps_count", 0),
         "valuation_eps_normalized": rec.get("valuation_eps_normalized", False),
