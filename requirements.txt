@@ -20,3 +20,4 @@ vnstock
 vnai
 google-genai
 python-dotenv
+xhtml2pdf

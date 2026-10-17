@@ -14,29 +14,89 @@ Một ứng dụng web được xây dựng bằng **Streamlit** giúp nhà đ�
 
 ## 🚀 Hướng Dẫn Cài Đặt & Chạy Ứng Dụng
 
-Yêu cầu: Máy tính của bạn cần cài đặt sẵn **Python** (phiên bản 3.8 trở lên).
+### Yêu cầu
+- **Python 3.10 – 3.13** (khuyến nghị 3.11+; đã kiểm thử trên 3.13). Khi cài trên Windows nhớ tick **"Add Python to PATH"**.
+- **Git** (hoặc tải ZIP từ GitHub rồi giải nén).
+- Kết nối Internet (lấy dữ liệu từ Vietcap/vnstock, tin tức, Gemini).
+- *(Tùy chọn)* Khóa API Gemini để có phần nhận xét AI — xem Bước 4.
 
 ### Bước 1: Tải mã nguồn về máy
-Mở Terminal (hoặc Command Prompt/PowerShell) và gõ lệnh:
 ```bash
 git clone https://github.com/thanhltkk24414-lang/GPM1-GK-NH-M-3.git
 cd GPM1-GK-NH-M-3
 ```
 
-### Bước 2: Cài đặt các thư viện cần thiết (Bắt buộc)
-Chạy lệnh sau để cài đặt các thư viện lõi (Streamlit, Pandas, VNStock...):
+### Bước 2: Tạo môi trường ảo (khuyến nghị)
+**Windows (PowerShell):**
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+Nếu PowerShell báo lỗi chặn script, chạy một lần: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Dùng Command Prompt thì kích hoạt bằng `.venv\Scripts\activate.bat`.
+
+**macOS / Linux:**
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+Sau khi kích hoạt, đầu dòng lệnh sẽ có `(.venv)`.
+
+### Bước 3: Cài đặt thư viện
+```bash
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
-*(Lưu ý: Nếu máy tính của bạn dùng Mac/Linux hoặc cài đặt nhiều phiên bản Python, bạn có thể cần dùng `pip3 install -r requirements.txt`)*
+- File `requirements.txt` có dòng `--extra-index-url https://vnstocks.com/api/simple` để cài `vnstock`/`vnai`; cần có Internet.
+- **PDF trên Linux/Ubuntu:** cài thêm thư viện hệ thống cho WeasyPrint:
+  `sudo apt install $(cat packages.txt)`. Trên Windows không cần — ứng dụng tự dùng xhtml2pdf/ReportLab.
+- **OCR báo cáo thường niên dạng scan (tùy chọn):** `pip install -r requirements-ocr.txt`. Không cài vẫn chạy bình thường, chỉ không đọc được PDF scan.
 
-### Bước 3: Khởi chạy giao diện Web
-Gõ lệnh sau để khởi động server Streamlit:
+### Bước 4: Cấu hình khóa API (file `.env`)
+File `.env` **không có trong repo** (bị `.gitignore`), nên bạn phải tự tạo ở thư mục gốc (cùng cấp với `app.py`):
+```env
+# Nhận xét AI - lấy miễn phí tại https://aistudio.google.com/apikey
+GEMINI_API_KEY=your_gemini_key
+
+# Tùy chọn: AI dự phòng nếu Gemini lỗi
+# ANTHROPIC_API_KEY=...
+# OPENAI_API_KEY=...
+
+# Tùy chọn: chỉ cần nếu muốn chạy thêm collector DNSE
+# DNSE_API_KEY=...
+# DNSE_API_SECRET=...
+
+# Tùy chọn: khóa vnstock (nếu có) để tăng giới hạn truy vấn
+# VNSTOCK_API_KEY=...
+```
+**Cách lấy `GEMINI_API_KEY` (miễn phí):**
+1. Mở https://aistudio.google.com/apikey và đăng nhập bằng tài khoản Google.
+2. Bấm **Create API key** (chọn một project có sẵn hoặc tạo project mới).
+3. Sao chép chuỗi key (bắt đầu bằng `AIza...`) và dán vào `.env` sau dấu `=`, không có dấu cách hay dấu ngoặc kép.
+4. Lưu file rồi chạy lại `streamlit run app.py`.
+
+- **Không có khóa nào vẫn chạy được**: dữ liệu giá, kỹ thuật, cơ bản, định giá và chấm điểm đều hoạt động; chỉ phần nhận xét AI sẽ báo thiếu khóa/không hiển thị.
+- Tuyệt đối **không commit** file `.env` hay chia sẻ khóa công khai.
+
+### Bước 5: Khởi chạy giao diện Web
 ```bash
 streamlit run app.py
 ```
-Sau vài giây, trình duyệt web của bạn sẽ tự động mở trang web tại địa chỉ `http://localhost:8501`. 
-Bạn chỉ cần nhập mã cổ phiếu (VD: FPT, HPG, VCB) vào ô tìm kiếm và hệ thống sẽ tự động làm phần việc còn lại!
+Trình duyệt tự mở `http://localhost:8501` (nếu không, hãy mở tay). Nhập mã cổ phiếu (VD: FPT, HPG, VCB) và hệ thống sẽ tự tải dữ liệu, tính toán, hiển thị báo cáo.
+
+- **Lần đầu tra cứu mỗi mã sẽ chậm** (vài chục giây đến vài phút) vì phải tải giá và báo cáo tài chính; các lần sau dùng dữ liệu đã lưu.
+- Muốn đổi cổng: `streamlit run app.py --server.port 8502`. Dừng ứng dụng bằng `Ctrl + C` trong terminal.
+- Thư mục `data/`, `reports/`, `annual_reports/`, `outputs/` được tự tạo/ghi khi chạy; `data/market_data.db` và `data/symbols.csv` đã có sẵn trong repo.
+
+### Xử lý sự cố thường gặp
+| Hiện tượng | Cách xử lý |
+|---|---|
+| `streamlit` / `pip` không nhận lệnh | Chưa kích hoạt `.venv` hoặc Python chưa vào PATH; dùng `python -m pip ...` và `python -m streamlit run app.py` |
+| Lỗi khi cài `vnstock`/`vnai` | Kiểm tra Internet/VPN/proxy; chạy lại `pip install -r requirements.txt` |
+| Lỗi cài `weasyprint` hoặc thiếu thư viện khi xuất PDF | Windows: bỏ qua, ứng dụng tự dùng xhtml2pdf; Linux: cài `packages.txt` như Bước 3 |
+| Không có nhận xét AI | Kiểm tra `GEMINI_API_KEY` trong `.env`, tên file phải đúng là `.env` (không phải `.env.txt`), rồi khởi động lại Streamlit |
+| Báo lỗi hồ sơ doanh nghiệp / không tải được dữ liệu | Thường do mạng hoặc nguồn tạm giới hạn truy cập; chờ ít phút rồi tra cứu lại |
+| `database is locked` | Chỉ chạy **một** tiến trình Streamlit; đóng các cửa sổ chạy trùng |
+| Cổng 8501 đang bận | Dùng `--server.port` khác |
 
 ### Dữ liệu giá trên dashboard
 - Khi mở báo cáo một mã, dashboard khởi động realtime pipeline nền một lần cho tiến trình Streamlit. WebSocket Vietcap ghi dữ liệu mới vào `data/market_data.db`; nguồn và thời điểm giá đang hiển thị được ghi ngay dưới báo cáo.
